@@ -9,7 +9,7 @@ import { toZonedTime, format } from 'date-fns-tz';
 // --- Constants (easy to change) ---
 const PRE_MARKET_MINUTES = 5;       // How many minutes before the hour to place orders
 const ORDER_POLL_INTERVAL_MS = 15_000; // How often to check if a buy order was filled (15s)
-const ORDER_FILL_TIMEOUT_MS = 20 * 60 * 1000; // Stop monitoring after 20 minutes (GTD equivalent)
+const ORDER_FILL_TIMEOUT_MS = (PRE_MARKET_MINUTES + 30) * 60 * 1000; // Stop monitoring after 20 minutes (GTD equivalent)
 const SELL_DELAY_MS = 3_000;        // Brief delay before placing sell order after fill
 
 const enteredCycles = new Set<number>();
