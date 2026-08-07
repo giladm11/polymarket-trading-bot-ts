@@ -2,10 +2,23 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+export type StrategyName = 'hourly' | 'rsi';
+
+export interface RsiConfig {
+  symbol: string;
+  interval: string;
+  period: number;
+  overbought: number;
+  oversold: number;
+  buyLevels: number[];
+}
+
 export interface BotConfig {
   orderSizeUsd: number;
   buyPrice: number;
   sellPrice: number;
+  activeStrategy: StrategyName;
+  rsi: RsiConfig;
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -15,6 +28,15 @@ const DEFAULT_CONFIG: BotConfig = {
   orderSizeUsd: parseFloat(process.env.ORDER_AMOUNT_USD ?? '10'),
   buyPrice: 0.3,
   sellPrice: 0.35,
+  activeStrategy: 'hourly',
+  rsi: {
+    symbol: 'BTCUSDT',
+    interval: '15m',
+    period: 6,
+    overbought: 83,
+    oversold: 13,
+    buyLevels: [0.50, 0.40],
+  },
 };
 
 /**
@@ -44,5 +66,35 @@ export function saveConfig(config: BotConfig): void {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
   } catch (e) {
     console.error('[Config] Failed to save config file:', e);
+  }
+}
+
+export function setActiveStrategy(strategy: StrategyName): void {
+  const config = loadConfig();
+  config.activeStrategy = strategy;
+  saveConfig(config);
+}
+
+export function updateRsiConfig(updates: Partial<RsiConfig>): void {
+  const config = loadConfig();
+  config.rsi = { ...config.rsi, ...updates };
+  saveConfig(config);
+}
+
+export function setRsiBuyLevel(index: number, price: number): void {
+  const config = loadConfig();
+  if (index < 0 || index >= config.rsi.buyLevels.length) {
+    config.rsi.buyLevels.push(price);
+  } else {
+    config.rsi.buyLevels[index] = price;
+  }
+  saveConfig(config);
+}
+
+export function removeRsiBuyLevel(index: number): void {
+  const config = loadConfig();
+  if (index >= 0 && index < config.rsi.buyLevels.length) {
+    config.rsi.buyLevels.splice(index, 1);
+    saveConfig(config);
   }
 }

@@ -117,7 +117,6 @@ export async function getBalance(): Promise<number | null> {
     if (result.isOk?.()) {
       const responseBody = result.value;
       const text = await responseBody.text?.() ?? await responseBody.body?.text?.() ?? '';
-      console.log(text);
       const data = JSON.parse(text);
       const rawBalance = data?.balance ?? '0';
       return parseInt(String(rawBalance), 10) / 1e6;
@@ -126,5 +125,42 @@ export async function getBalance(): Promise<number | null> {
   } catch (e: unknown) {
     logError('Polymarket.getBalance', e);
     return null;
+  }
+}
+
+export async function getTokenBalance(tokenId: string): Promise<number | null> {
+  if (!client) await initPolymarket();
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const clientAny = client as any;
+    const result = await clientAny.secureClob
+      .get('/balance-allowance', {
+        params: { asset_type: 'CONDITIONAL', token_id: tokenId, signature_type: 2 },
+      });
+
+    if (result.isOk?.()) {
+      const responseBody = result.value;
+      const text = await responseBody.text?.() ?? await responseBody.body?.text?.() ?? '';
+      const data = JSON.parse(text);
+      const rawBalance = data?.balance ?? '0';
+      return parseInt(String(rawBalance), 10) / 1e6;
+    }
+    return null;
+  } catch (e: unknown) {
+    logError('Polymarket.getTokenBalance', e);
+    return null;
+  }
+}
+
+export async function cancelOrders(orderIds: string[]): Promise<string[]> {
+  if (!client) await initPolymarket();
+  if (orderIds.length === 0) return [];
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await (client as any).cancelOrders({ orderIds });
+    return response.canceled ?? [];
+  } catch (e: unknown) {
+    logError('Polymarket.cancelOrders', e);
+    return [];
   }
 }
