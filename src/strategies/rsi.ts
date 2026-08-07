@@ -44,16 +44,13 @@ async function checkAndTrade() {
   const minutes = now.getMinutes();
 
   // Log every tick so you can see the bot is alive
-  logDebug('RSI', `Tick: ${now.toLocaleTimeString()} — min=${minutes} interval=${intervalMinutes}m`);
 
   if (minutes % intervalMinutes !== 0) {
-    logDebug('RSI', `Skip: minute ${minutes} is not a ${intervalMinutes}-min boundary`);
     return;
   }
 
   const candleKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${Math.floor(minutes / intervalMinutes)}`;
   if (enteredCandles.has(candleKey)) {
-    logDebug('RSI', `Skip: candle ${candleKey} already processed`);
     return;
   }
 
@@ -66,32 +63,39 @@ async function checkAndTrade() {
     return;
   }
 
-  // The last kline is the current (open) candle — exclude it
-  const currentKline = allKlines[allKlines.length - 1];
-  const closedKlines = allKlines.slice(0, -1);
+  // Check if the last kline is a new (open) candle or still the previous closed one
+  const lastKline = allKlines[allKlines.length - 1];
+  const lastKlineTime = lastKline.openTime;
 
-  // Log candle timestamps for verification
+  // Expected open time of the current candle
+  const expectedCurrentOpen = new Date(now);
+  expectedCurrentOpen.setMinutes(Math.floor(now.getMinutes() / intervalMinutes) * intervalMinutes, 0, 0);
+
+  const isNewCandle = lastKlineTime >= expectedCurrentOpen.getTime();
+
   const tz = 'America/New_York';
-  for (let i = 0; i < closedKlines.length; i++) {
-    const k = closedKlines[i];
-    const time = new Date(k.openTime).toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit' });
-    logDebug('RSI', `  Closed candle ${i}: ${time} ET — close: ${k.close}`);
+  const lastTime = new Date(lastKlineTime).toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit' });
+
+  let closes: number[];
+  if (isNewCandle) {
+    // Last kline is current open candle — exclude it
+    closes = allKlines.slice(0, -1).map(k => k.close);
+    logDebug('RSI', `  Current (excluded): ${lastTime} ET — close: ${lastKline.close}`);
+  } else {
+    // New candle not created yet — all klines are closed
+    closes = allKlines.map(k => k.close);
+    logDebug('RSI', `  No new candle yet — using all ${closes.length} closed candles (last: ${lastTime} ET)`);
   }
 
-  const currentTime = new Date(currentKline.openTime).toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit' });
-  logDebug('RSI', `  Current (excluded): ${currentTime} ET — close: ${currentKline.close}`);
-
-  if (closedKlines.length < rsi.period + 2) {
-    logWarn('RSI', `Not enough closed candles (got ${closedKlines.length}, need ${rsi.period + 2})`);
+  if (closes.length < rsi.period + 2) {
+    logWarn('RSI', `Not enough closed candles (got ${closes.length}, need ${rsi.period + 2})`);
     return;
   }
 
-  // Compute RSI for the last two closed candles
-  const closes = closedKlines.map(k => k.close);
-
-  // Current signal: RSI of the most recent closed candle
+  // Current RSI: all available closes (matches Binance chart)
   const currentRsi = calculateRsi(closes, rsi.period);
-  // Previous signal: RSI of the candle before that (exclude last closed)
+
+  // Previous RSI: exclude last closed candle (what was available one candle ago)
   const prevCloses = closes.slice(0, -1);
   const prevRsi = calculateRsi(prevCloses, rsi.period);
 

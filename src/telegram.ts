@@ -49,9 +49,9 @@ function registerCommands(bot: TelegramBot) {
     let text =
       `📋 <b>Configuration</b>\n\n` +
       `🔀 Active Strategy: <b>${config.activeStrategy}</b>\n` +
-      `💵 Order Size: <b>$${config.orderSizeUsd}</b>/level/side\n` +
-      `🟢 Buy Price: <b>${config.buyPrice}</b>\n` +
-      `🔴 Sell Price: <b>${config.sellPrice}</b>`;
+      `💵 Order Size: <b>$${config.orderSizeUsd}</b>\n`;
+      // `🟢 Buy Price: <b>${config.buyPrice}</b>\n` +
+      // `🔴 Sell Price: <b>${config.sellPrice}</b>`;
 
     if (config.activeStrategy === 'rsi') {
       const rsi = config.rsi;
