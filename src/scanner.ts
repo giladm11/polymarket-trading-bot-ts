@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { getMarketBySlug, placeLimitOrder, fetchOrderStatus } from './polymarket.js';
+import { getMarketBySlug, placeLimitOrder, fetchOrderStatus, getBalance } from './polymarket.js';
 import { loadConfig } from './config.js';
 import { sendTelegramMessage } from './telegram.js';
 import { logError, logInfo, logWarn } from './logger.js';
@@ -7,7 +7,7 @@ import { OrderSide } from '@polymarket/client';
 import { toZonedTime, format } from 'date-fns-tz';
 
 // --- Constants (easy to change) ---
-const PRE_MARKET_MINUTES = 50;       // How many minutes before the hour to place orders
+const PRE_MARKET_MINUTES = 5;       // How many minutes before the hour to place orders
 const ORDER_POLL_INTERVAL_MS = 15_000; // How often to check if a buy order was filled (15s)
 const ORDER_FILL_TIMEOUT_MS = 20 * 60 * 1000; // Stop monitoring after 20 minutes (GTD equivalent)
 const SELL_DELAY_MS = 3_000;        // Brief delay before placing sell order after fill
@@ -21,6 +21,7 @@ interface TrackedOrder {
   buyPrice: number;
   placedAt: number; // timestamp ms
   sideLabel: string;
+  expiration?: number; // Unix timestamp in seconds — GTD expiry
 }
 
 const trackedOrders: TrackedOrder[] = [];
@@ -99,15 +100,20 @@ async function tryEnterNextMarket() {
     const { buyPrice, orderSizeUsd } = config;
     const size = parseFloat((orderSizeUsd / buyPrice).toFixed(2));
 
+    // Order expires 20 minutes after market open (GTD)
+    const ORDER_EXPIRY_SECONDS = 20 * 60;
+    const expiration = Math.floor(nextHour.getTime() / 1000) + ORDER_EXPIRY_SECONDS;
+
     sendTelegramMessage(
       `🚀 <b>Entering market:</b> ${slug}\n` +
       `Buy Price: <b>${buyPrice}</b> | Size: <b>${size}</b> shares\n` +
+      `Expires: ${ORDER_EXPIRY_SECONDS / 60} min after open (GTD)\n` +
       `(UP token: ${tokens.up.slice(0, 10)}... DOWN token: ${tokens.down.slice(0, 10)}...)`
     );
 
     await Promise.all([
-      doBuyOrder(tokens.up, buyPrice, size, 'UP'),
-      doBuyOrder(tokens.down, buyPrice, size, 'DOWN'),
+      doBuyOrder(tokens.up, buyPrice, size, 'UP', expiration),
+      doBuyOrder(tokens.down, buyPrice, size, 'DOWN', expiration),
     ]);
 
   } finally {
@@ -117,9 +123,9 @@ async function tryEnterNextMarket() {
 
 // ────────────────────────────────────────────────────────────────────────────
 
-async function doBuyOrder(tokenId: string, buyPrice: number, size: number, sideLabel: string) {
+async function doBuyOrder(tokenId: string, buyPrice: number, size: number, sideLabel: string, expiration?: number) {
   try {
-    const orderId = await placeLimitOrder(tokenId, OrderSide.BUY, buyPrice, size);
+    const orderId = await placeLimitOrder(tokenId, OrderSide.BUY, buyPrice, size, expiration);
     if (!orderId) {
       console.warn(`[${sideLabel}] Order placed but no orderId returned`);
       return;
@@ -128,8 +134,8 @@ async function doBuyOrder(tokenId: string, buyPrice: number, size: number, sideL
     console.log(`[${sideLabel}] BUY order placed: ${orderId}`);
 
     // Start polling for fill in the background
-    trackedOrders.push({ orderId, tokenId, buyPrice, placedAt: Date.now(), sideLabel });
-    void monitorForFill({ orderId, tokenId, buyPrice, placedAt: Date.now(), sideLabel });
+    trackedOrders.push({ orderId, tokenId, buyPrice, placedAt: Date.now(), sideLabel, expiration });
+    void monitorForFill({ orderId, tokenId, buyPrice, placedAt: Date.now(), sideLabel, expiration });
 
   } catch (e: unknown) {
     logError(`BuyOrder.${sideLabel}`, e);
@@ -139,7 +145,7 @@ async function doBuyOrder(tokenId: string, buyPrice: number, size: number, sideL
 // ────────────────────────────────────────────────────────────────────────────
 
 async function monitorForFill(tracked: TrackedOrder): Promise<void> {
-  const { orderId, tokenId, buyPrice, sideLabel } = tracked;
+  const { orderId, tokenId, buyPrice, sideLabel, expiration } = tracked;
 
   console.log(`[Monitor] Watching order ${orderId} (${sideLabel}) for fill...`);
 
@@ -203,8 +209,53 @@ async function doSellOrder(tokenId: string, sizeMatched: number, sideLabel: stri
       `📤 <b>SELL ORDER PLACED (${sideLabel})</b>\n` +
       `Size: <b>${size}</b> shares @ <b>${sellPrice}</b>`
     );
+
+    // Monitor for sell fill
+    void monitorForSellFill(orderId, sideLabel, size, sellPrice);
   } catch (e: unknown) {
     logError(`SellOrder.${sideLabel}`, e);
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
+async function monitorForSellFill(orderId: string, sideLabel: string, size: number, sellPrice: number): Promise<void> {
+  console.log(`[Monitor] Watching sell order ${orderId} (${sideLabel}) for fill...`);
+  const startTime = Date.now();
+  const MAX_SELL_WAIT_MS = 60 * 60 * 1000; // 60 minutes max for sell
+
+  while (true) {
+    await sleep(ORDER_POLL_INTERVAL_MS);
+
+    if (Date.now() - startTime > MAX_SELL_WAIT_MS) {
+      console.log(`[Monitor] Sell order ${orderId} (${sideLabel}) timed out — not filled.`);
+      break;
+    }
+
+    try {
+      const { status, sizeMatched } = await fetchOrderStatus(orderId);
+
+      if (status === 'not_found') {
+        console.log(`[Monitor] Sell order ${orderId} (${sideLabel}) is gone — likely cancelled.`);
+        break;
+      }
+
+      const isFilled = status === 'MATCHED' || status === 'filled' || status === 'closed';
+      if (isFilled && sizeMatched > 0) {
+        console.log(`[Monitor] Sell order ${orderId} (${sideLabel}) FILLED — ${sizeMatched} shares`);
+        const balance = await getBalance();
+        const balanceStr = balance !== null ? `$${balance.toFixed(2)}` : 'unknown';
+        sendTelegramMessage(
+          `🟢 <b>SELL FILLED (${sideLabel})</b>\n` +
+          `Order: ${orderId}\nFilled: <b>${sizeMatched}</b> shares @ ${sellPrice}\n` +
+          `Revenue: <b>$${(sizeMatched * sellPrice).toFixed(2)}</b>\n` +
+          `💰 Balance: <b>${balanceStr}</b>`
+        );
+        break;
+      }
+    } catch (e: unknown) {
+      logError(`Monitor.Sell.${sideLabel}`, e);
+    }
   }
 }
 

@@ -1,5 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { loadConfig, saveConfig } from './config.js';
+import { getBalance } from './polymarket.js';
 
 let bot: TelegramBot | null = null;
 let chatId: string = '';
@@ -88,12 +89,23 @@ function registerCommands(bot: TelegramBot) {
     saveConfig(config);
     bot.sendMessage(id, `✅ Sell price updated to <b>${val}</b>`, { parse_mode: 'HTML' });
   });
+
+  bot.onText(/^\/balance/, async (msg) => {
+    const id = msg.chat.id.toString();
+    const balance = await getBalance();
+    if (balance !== null) {
+      bot.sendMessage(id, `💰 <b>Balance:</b> $${balance.toFixed(2)} USDC`, { parse_mode: 'HTML' });
+    } else {
+      bot.sendMessage(id, '❌ Failed to fetch balance.');
+    }
+  });
 }
 
 function getHelpText(): string {
   return (
     `🤖 <b>Polymarket BTC Bot — Commands</b>\n\n` +
     `/view — View current configuration\n` +
+    `/balance — Check USDC balance\n` +
     `/setsize &lt;USD&gt; — Set order size in USD (e.g. /setsize 5)\n` +
     `/setbuy &lt;price&gt; — Set buy price (e.g. /setbuy 0.3)\n` +
     `/setsell &lt;price&gt; — Set sell price (e.g. /setsell 0.35)\n` +

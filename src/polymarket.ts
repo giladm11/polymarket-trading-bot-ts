@@ -55,7 +55,8 @@ export async function placeLimitOrder(
   tokenId: string,
   side: OrderSide,
   price: number,
-  size: number
+  size: number,
+  expiration?: number  // Unix timestamp in seconds — omit for GTC
 ): Promise<string> {
   if (!client) await initPolymarket();
   try {
@@ -64,6 +65,7 @@ export async function placeLimitOrder(
       side,
       price,
       size,
+      ...(expiration !== undefined && { expiration }),
     });
     if (!response.ok) {
       throw new Error(`Order rejected: ${response.message} (code: ${response.code})`);
@@ -96,5 +98,33 @@ export async function fetchOrderStatus(orderId: string): Promise<{ status: strin
     }
     logError('Polymarket.fetchOrderStatus', e);
     throw e;
+  }
+}
+
+export async function getBalance(): Promise<number | null> {
+  if (!client) await initPolymarket();
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const clientAny = client as any;
+    // Fetch balance via CLOB API — balance is in base units (USDC has 6 decimals)
+    const result = await clientAny.secureClob
+      .get('/balance-allowance', {
+        params: { asset_type: 'COLLATERAL', signature_type: 2 },
+      });
+
+    // secureClob.get returns a neverthrow ResultAsync<Response>
+    // Read the body stream and parse JSON
+    if (result.isOk?.()) {
+      const responseBody = result.value;
+      const text = await responseBody.text?.() ?? await responseBody.body?.text?.() ?? '';
+      console.log(text);
+      const data = JSON.parse(text);
+      const rawBalance = data?.balance ?? '0';
+      return parseInt(String(rawBalance), 10) / 1e6;
+    }
+    return null;
+  } catch (e: unknown) {
+    logError('Polymarket.getBalance', e);
+    return null;
   }
 }
