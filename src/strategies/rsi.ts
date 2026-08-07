@@ -170,10 +170,10 @@ async function checkAndTrade() {
   );
 
   // Place buy orders for each level
-  // for (const buyPrice of rsi.buyLevels) {
-  //   const size = parseFloat(((config.orderSizeUsd * multiplier) / buyPrice).toFixed(2));
-  //   await placeBuyOrder(targetTokenId, buyPrice, size, sideLabel);
-  // }
+  for (const buyPrice of rsi.buyLevels) {
+    const size = parseFloat(((config.orderSizeUsd * multiplier) / buyPrice).toFixed(2));
+    await placeBuyOrder(targetTokenId, buyPrice, size, sideLabel);
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────────────

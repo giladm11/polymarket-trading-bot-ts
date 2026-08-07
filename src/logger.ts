@@ -3,7 +3,7 @@ import { sendTelegramMessage } from './telegram.js';
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 // Set minimum level: debug < info < warn < error
-const MIN_LEVEL: LogLevel = (process.env.LOG_LEVEL as LogLevel) ?? 'debug';
+const MIN_LEVEL: LogLevel = (process.env.LOG_LEVEL as LogLevel) ?? 'error';
 
 const LEVEL_ORDER: Record<LogLevel, number> = {
   debug: 0,
