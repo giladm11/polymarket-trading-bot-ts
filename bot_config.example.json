@@ -1,0 +1,14 @@
+{
+  "orderSizeUsd": 10,
+  "buyPrice": 0.3,
+  "sellPrice": 0.35,
+  "activeStrategy": "hourly",
+  "rsi": {
+    "symbol": "BTCUSDT",
+    "interval": "15m",
+    "period": 6,
+    "overbought": 83,
+    "oversold": 13,
+    "buyLevels": [0.50, 0.40]
+  }
+}
