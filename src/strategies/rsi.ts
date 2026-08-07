@@ -59,9 +59,8 @@ async function checkAndTrade() {
 
   logInfo('RSI', `✅ Candle boundary: ${candleKey}`);
 
-  // Fetch period+3: need period+2 closed candles to compute RSI for two candles
-  // (current closed + previous closed), plus 1 current (open) to exclude
-  const allKlines = await fetchBinanceKlines(rsi.symbol, rsi.interval, rsi.period + 3);
+  // Fetch 200 candles so Wilder's smoothing converges (same as Binance default)
+  const allKlines = await fetchBinanceKlines(rsi.symbol, rsi.interval, 200);
   if (!allKlines || allKlines.length < rsi.period + 3) {
     logWarn('RSI', `Not enough kline data (got ${allKlines?.length ?? 0}, need ${rsi.period + 3})`);
     return;
@@ -108,21 +107,18 @@ async function checkAndTrade() {
   if (prevRsi > rsi.overbought) prevSignal = 'overbought';
   else if (prevRsi < rsi.oversold) prevSignal = 'oversold';
 
-  // Only trade on fresh signal: current candle in threshold, previous was NOT
   if (!currentSignal) {
     logInfo('RSI', `No signal on current candle.`);
     return;
   }
 
-  if (currentSignal === prevSignal) {
-    logInfo('RSI', `Signal "${currentSignal}" already active on previous candle, skipping.`);
-    return;
-  }
-
   enteredCandles.add(candleKey);
 
+  // If previous candle had the same signal, triple the order size
+  const multiplier = currentSignal === prevSignal ? 3 : 1;
+
   const sideLabel = currentSignal === 'overbought' ? 'DOWN' : 'UP';
-  logInfo('RSI', `Fresh signal: ${currentSignal} → buying ${sideLabel}`);
+  logInfo('RSI', `Signal: ${currentSignal} → buying ${sideLabel}${multiplier > 1 ? ` (${multiplier}x — consecutive signal)` : ''}`);
 
   // Find next candle
   const nextCandle = new Date(now);
@@ -165,15 +161,15 @@ async function checkAndTrade() {
     `RSI(${rsi.period}) = <b>${currentRsi.toFixed(2)}</b>\n` +
     `Market: ${slug}\n` +
     `Buying: <b>${sideLabel}</b> token\n` +
-    `Order size: <b>$${config.orderSizeUsd}</b>\n` +
+    `Order size: <b>$${config.orderSizeUsd * multiplier}</b>${multiplier > 1 ? ` (${multiplier}x consecutive)` : ''}\n` +
     `Buy prices: ${levelSummary}`
   );
 
   // Place buy orders for each level
-  for (const buyPrice of rsi.buyLevels) {
-    const size = parseFloat((config.orderSizeUsd / buyPrice).toFixed(2));
-    await placeBuyOrder(targetTokenId, buyPrice, size, sideLabel);
-  }
+  // for (const buyPrice of rsi.buyLevels) {
+  //   const size = parseFloat(((config.orderSizeUsd * multiplier) / buyPrice).toFixed(2));
+  //   await placeBuyOrder(targetTokenId, buyPrice, size, sideLabel);
+  // }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -276,22 +272,34 @@ async function fetchBinanceKlines(symbol: string, interval: string, limit: numbe
 function calculateRsi(closes: number[], period: number): number {
   if (closes.length < period + 1) return 50;
 
-  let gains = 0;
-  let losses = 0;
+  // Wilder's smoothing (same as Binance)
+  // Seed with simple average of first `period` changes
+  let avgGain = 0;
+  let avgLoss = 0;
 
-  for (let i = closes.length - period; i < closes.length; i++) {
+  for (let i = 1; i <= period; i++) {
     const change = closes[i] - closes[i - 1];
-    if (change > 0) gains += change;
-    else losses -= change;
+    if (change > 0) avgGain += change;
+    else avgLoss -= change;
   }
 
-  if (losses === 0) return 100;
-  if (gains === 0) return 0;
+  avgGain /= period;
+  avgLoss /= period;
 
-  const avgGain = gains / period;
-  const avgLoss = losses / period;
+  // Exponential smoothing for remaining candles
+  for (let i = period + 1; i < closes.length; i++) {
+    const change = closes[i] - closes[i - 1];
+    const gain = change > 0 ? change : 0;
+    const loss = change < 0 ? -change : 0;
+
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+  }
+
+  if (avgLoss === 0) return 100;
+  if (avgGain === 0) return 0;
+
   const rs = avgGain / avgLoss;
-
   return 100 - (100 / (1 + rs));
 }
 
