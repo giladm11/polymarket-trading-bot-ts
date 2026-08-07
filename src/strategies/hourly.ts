@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { getMarketBySlug, placeLimitOrder, fetchOrderStatus, getBalance } from '../polymarket.js';
 import { loadConfig } from '../config.js';
 import { sendTelegramMessage } from '../telegram.js';
-import { logError } from '../logger.js';
+import { logError, logInfo, logWarn } from '../logger.js';
 import { OrderSide } from '@polymarket/client';
 import { toZonedTime, format } from 'date-fns-tz';
 
@@ -58,13 +58,13 @@ async function tryEnterNextMarket() {
   if (enteredCycles.has(targetTs)) return;
 
   const slug = buildMarketSlug(nextHour);
-  console.log(`[Hourly] Looking for market slug: ${slug}`);
+  logInfo('Hourly', `Looking for market slug: ${slug}`);
 
   isEntering = true;
   try {
     const market = await getMarketBySlug(slug);
     if (!market) {
-      console.log(`[Hourly] Market not found: ${slug}`);
+      logWarn('Hourly', `Market not found: ${slug}`);
       return;
     }
 
@@ -74,7 +74,7 @@ async function tryEnterNextMarket() {
       false;
 
     if (!acceptingOrders) {
-      console.log(`[Hourly] Market found but not accepting orders yet: ${slug}`);
+      logWarn('Hourly', `Market found but not accepting orders yet: ${slug}`);
       return;
     }
 
@@ -115,11 +115,11 @@ async function doBuyOrder(tokenId: string, buyPrice: number, size: number, sideL
   try {
     const orderId = await placeLimitOrder(tokenId, OrderSide.BUY, buyPrice, size, expiration);
     if (!orderId) {
-      console.warn(`[Hourly.${sideLabel}] Order placed but no orderId returned`);
+      logWarn(`Hourly.${sideLabel}`, `Order placed but no orderId returned`);
       return;
     }
 
-    console.log(`[Hourly.${sideLabel}] BUY order placed: ${orderId}`);
+    logInfo(`Hourly.${sideLabel}`, `BUY order placed: ${orderId}`);
     trackedOrders.push({ orderId, tokenId, buyPrice, placedAt: Date.now(), sideLabel, expiration });
     void monitorForFill({ orderId, tokenId, buyPrice, placedAt: Date.now(), sideLabel, expiration });
 
@@ -133,13 +133,13 @@ async function doBuyOrder(tokenId: string, buyPrice: number, size: number, sideL
 async function monitorForFill(tracked: TrackedOrder): Promise<void> {
   const { orderId, tokenId, buyPrice, sideLabel } = tracked;
 
-  console.log(`[Hourly.Monitor] Watching order ${orderId} (${sideLabel}) for fill...`);
+  logInfo('Hourly.Monitor', `Watching order ${orderId} (${sideLabel}) for fill...`);
 
   while (true) {
     await sleep(ORDER_POLL_INTERVAL_MS);
 
     if (Date.now() - tracked.placedAt > ORDER_FILL_TIMEOUT_MS) {
-      console.log(`[Hourly.Monitor] Order ${orderId} (${sideLabel}) timed out.`);
+      logWarn('Hourly.Monitor', `Order ${orderId} (${sideLabel}) timed out.`);
       break;
     }
 
@@ -147,13 +147,13 @@ async function monitorForFill(tracked: TrackedOrder): Promise<void> {
       const { status, sizeMatched } = await fetchOrderStatus(orderId);
 
       if (status === 'not_found') {
-        console.log(`[Hourly.Monitor] Order ${orderId} (${sideLabel}) is gone.`);
+        logInfo('Hourly.Monitor', `Order ${orderId} (${sideLabel}) is gone.`);
         break;
       }
 
       const isFilled = status === 'MATCHED' || status === 'filled' || status === 'closed';
       if (isFilled && sizeMatched > 0) {
-        console.log(`[Hourly.Monitor] Order ${orderId} (${sideLabel}) FILLED — ${sizeMatched} shares`);
+        logInfo('Hourly.Monitor', `Order ${orderId} (${sideLabel}) FILLED — ${sizeMatched} shares`);
         sendTelegramMessage(
           `🟡 <b>BUY FILLED (${sideLabel})</b>\n` +
           `Order: ${orderId}\nFilled: <b>${sizeMatched}</b> shares @ ${buyPrice}`
@@ -180,13 +180,13 @@ async function doSellOrder(tokenId: string, sizeMatched: number, sideLabel: stri
   const size = Math.floor(sizeMatched * 100) / 100;
 
   if (size < 0.01) {
-    console.warn(`[Hourly.Sell] Size too small (${size}), skipping.`);
+    logWarn('Hourly.Sell', `Size too small (${size}), skipping.`);
     return;
   }
 
   try {
     const orderId = await placeLimitOrder(tokenId, OrderSide.SELL, sellPrice, size);
-    console.log(`[Hourly.Sell] SELL order placed for ${sideLabel}: ${orderId} @ ${sellPrice}`);
+    logInfo('Hourly.Sell', `SELL order placed for ${sideLabel}: ${orderId} @ ${sellPrice}`);
     sendTelegramMessage(
       `📤 <b>SELL ORDER PLACED (${sideLabel})</b>\n` +
       `Size: <b>${size}</b> shares @ <b>${sellPrice}</b>`
@@ -201,7 +201,7 @@ async function doSellOrder(tokenId: string, sizeMatched: number, sideLabel: stri
 // ────────────────────────────────────────────────────────────────────────────
 
 async function monitorForSellFill(orderId: string, sideLabel: string, size: number, sellPrice: number): Promise<void> {
-  console.log(`[Hourly.Monitor] Watching sell ${orderId} (${sideLabel}) @ ${sellPrice}...`);
+  logInfo('Hourly.Monitor', `Watching sell ${orderId} (${sideLabel}) @ ${sellPrice}...`);
   const startTime = Date.now();
   const MAX_SELL_WAIT_MS = 60 * 60 * 1000;
 
@@ -209,7 +209,7 @@ async function monitorForSellFill(orderId: string, sideLabel: string, size: numb
     await sleep(ORDER_POLL_INTERVAL_MS);
 
     if (Date.now() - startTime > MAX_SELL_WAIT_MS) {
-      console.log(`[Hourly.Monitor] Sell ${orderId} (${sideLabel}) timed out.`);
+      logWarn('Hourly.Monitor', `Sell ${orderId} (${sideLabel}) timed out.`);
       break;
     }
 
@@ -217,13 +217,13 @@ async function monitorForSellFill(orderId: string, sideLabel: string, size: numb
       const { status, sizeMatched } = await fetchOrderStatus(orderId);
 
       if (status === 'not_found') {
-        console.log(`[Hourly.Monitor] Sell ${orderId} (${sideLabel}) is gone.`);
+        logInfo('Hourly.Monitor', `Sell ${orderId} (${sideLabel}) is gone.`);
         break;
       }
 
       const isFilled = status === 'MATCHED' || status === 'filled' || status === 'closed';
       if (isFilled && sizeMatched > 0) {
-        console.log(`[Hourly.Monitor] Sell ${orderId} (${sideLabel}) FILLED — ${sizeMatched} shares`);
+        logInfo('Hourly.Monitor', `Sell ${orderId} (${sideLabel}) FILLED — ${sizeMatched} shares`);
         const balance = await getBalance();
         const balanceStr = balance !== null ? `$${balance.toFixed(2)}` : 'unknown';
         sendTelegramMessage(

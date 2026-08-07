@@ -1,8 +1,8 @@
 {
-  "orderSizeUsd": 10,
+  "orderSizeUsd": 3,
   "buyPrice": 0.3,
   "sellPrice": 0.35,
-  "activeStrategy": "hourly",
+  "activeStrategy": "rsi",
   "rsi": {
     "symbol": "BTCUSDT",
     "interval": "15m",

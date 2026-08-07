@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { getMarketBySlug, placeLimitOrder, fetchOrderStatus } from '../polymarket.js';
 import { loadConfig } from '../config.js';
 import { sendTelegramMessage } from '../telegram.js';
-import { logError } from '../logger.js';
+import { logError, logInfo, logDebug, logWarn } from '../logger.js';
 import { OrderSide } from '@polymarket/client';
 import { toZonedTime, format } from 'date-fns-tz';
 
@@ -11,7 +11,6 @@ const ORDER_POLL_INTERVAL_MS = 15_000;
 const ORDER_FILL_TIMEOUT_MS = 30 * 60 * 1000;
 
 const enteredCandles = new Set<string>();
-let lastSignal: 'overbought' | 'oversold' | null = null;
 
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -39,25 +38,32 @@ export function startRsiStrategy() {
 async function checkAndTrade() {
   const config = loadConfig();
   const rsi = config.rsi;
+  const intervalMinutes = parseInt(rsi.interval);
 
   const now = new Date();
-  const intervalMinutes = parseInt(rsi.interval);
   const minutes = now.getMinutes();
 
-  if (minutes % intervalMinutes !== 0) return;
+  // Log every tick so you can see the bot is alive
+  logDebug('RSI', `Tick: ${now.toLocaleTimeString()} — min=${minutes} interval=${intervalMinutes}m`);
+
+  if (minutes % intervalMinutes !== 0) {
+    logDebug('RSI', `Skip: minute ${minutes} is not a ${intervalMinutes}-min boundary`);
+    return;
+  }
 
   const candleKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${Math.floor(minutes / intervalMinutes)}`;
-  if (enteredCandles.has(candleKey)) return;
+  if (enteredCandles.has(candleKey)) {
+    logDebug('RSI', `Skip: candle ${candleKey} already processed`);
+    return;
+  }
 
-  // Wait for candle to close
-  if (minutes % intervalMinutes === 0 && now.getSeconds() < 30) return;
+  logInfo('RSI', `✅ Candle boundary: ${candleKey}`);
 
-  console.log(`[RSI] Checking candle boundary: ${candleKey}`);
-
-  // Fetch period+2: period+1 closed candles needed for RSI, plus 1 current (open) to exclude
-  const allKlines = await fetchBinanceKlines(rsi.symbol, rsi.interval, rsi.period + 2);
-  if (!allKlines || allKlines.length < rsi.period + 2) {
-    console.log(`[RSI] Not enough kline data (got ${allKlines?.length ?? 0}, need ${rsi.period + 2})`);
+  // Fetch period+3: need period+2 closed candles to compute RSI for two candles
+  // (current closed + previous closed), plus 1 current (open) to exclude
+  const allKlines = await fetchBinanceKlines(rsi.symbol, rsi.interval, rsi.period + 3);
+  if (!allKlines || allKlines.length < rsi.period + 3) {
+    logWarn('RSI', `Not enough kline data (got ${allKlines?.length ?? 0}, need ${rsi.period + 3})`);
     return;
   }
 
@@ -70,45 +76,53 @@ async function checkAndTrade() {
   for (let i = 0; i < closedKlines.length; i++) {
     const k = closedKlines[i];
     const time = new Date(k.openTime).toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit' });
-    console.log(`[RSI]   Closed candle ${i}: ${time} ET — close: ${k.close}`);
+    logDebug('RSI', `  Closed candle ${i}: ${time} ET — close: ${k.close}`);
   }
 
   const currentTime = new Date(currentKline.openTime).toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit' });
-  console.log(`[RSI]   Current (excluded): ${currentTime} ET — close: ${currentKline.close}`);
+  logDebug('RSI', `  Current (excluded): ${currentTime} ET — close: ${currentKline.close}`);
 
-  if (closedKlines.length < rsi.period + 1) {
-    console.log(`[RSI] Not enough closed candles (got ${closedKlines.length}, need ${rsi.period + 1})`);
+  if (closedKlines.length < rsi.period + 2) {
+    logWarn('RSI', `Not enough closed candles (got ${closedKlines.length}, need ${rsi.period + 2})`);
     return;
   }
 
-  // Use only closed candle closes for RSI (need period+1 for period changes)
+  // Compute RSI for the last two closed candles
   const closes = closedKlines.map(k => k.close);
-  const rsiValue = calculateRsi(closes, rsi.period);
-  console.log(`[RSI] RSI(${rsi.period}) = ${rsiValue.toFixed(2)}`);
 
-  let signal: 'overbought' | 'oversold' | null = null;
+  // Current signal: RSI of the most recent closed candle
+  const currentRsi = calculateRsi(closes, rsi.period);
+  // Previous signal: RSI of the candle before that (exclude last closed)
+  const prevCloses = closes.slice(0, -1);
+  const prevRsi = calculateRsi(prevCloses, rsi.period);
 
-  if (rsiValue > rsi.overbought) {
-    signal = 'overbought';
-  } else if (rsiValue < rsi.oversold) {
-    signal = 'oversold';
-  }
+  logInfo('RSI', `Current RSI(${rsi.period}) = ${currentRsi.toFixed(2)} | Previous RSI = ${prevRsi.toFixed(2)}`);
 
-  if (!signal) {
-    lastSignal = null;
+  // Determine signals for both candles
+  let currentSignal: 'overbought' | 'oversold' | null = null;
+  let prevSignal: 'overbought' | 'oversold' | null = null;
+
+  if (currentRsi > rsi.overbought) currentSignal = 'overbought';
+  else if (currentRsi < rsi.oversold) currentSignal = 'oversold';
+
+  if (prevRsi > rsi.overbought) prevSignal = 'overbought';
+  else if (prevRsi < rsi.oversold) prevSignal = 'oversold';
+
+  // Only trade on fresh signal: current candle in threshold, previous was NOT
+  if (!currentSignal) {
+    logInfo('RSI', `No signal on current candle.`);
     return;
   }
 
-  if (lastSignal === signal) {
-    console.log(`[RSI] Signal "${signal}" already acted on, skipping.`);
+  if (currentSignal === prevSignal) {
+    logInfo('RSI', `Signal "${currentSignal}" already active on previous candle, skipping.`);
     return;
   }
 
-  lastSignal = signal;
   enteredCandles.add(candleKey);
 
-  const sideLabel = signal === 'overbought' ? 'DOWN' : 'UP';
-  console.log(`[RSI] Signal: ${signal} → buying ${sideLabel}`);
+  const sideLabel = currentSignal === 'overbought' ? 'DOWN' : 'UP';
+  logInfo('RSI', `Fresh signal: ${currentSignal} → buying ${sideLabel}`);
 
   // Find next candle
   const nextCandle = new Date(now);
@@ -118,11 +132,11 @@ async function checkAndTrade() {
   }
 
   const slug = buildMarketSlug(nextCandle, intervalMinutes);
-  console.log(`[RSI] Looking for market: ${slug}`);
+  logInfo('RSI', `Looking for market: ${slug}`);
 
   const market = await getMarketBySlug(slug);
   if (!market) {
-    console.log(`[RSI] Market not found: ${slug}`);
+    logWarn('RSI', `Market not found: ${slug}`);
     return;
   }
 
@@ -132,7 +146,7 @@ async function checkAndTrade() {
     false;
 
   if (!acceptingOrders) {
-    console.log(`[RSI] Market not accepting orders: ${slug}`);
+    logWarn('RSI', `Market not accepting orders: ${slug}`);
     return;
   }
 
@@ -147,8 +161,8 @@ async function checkAndTrade() {
   const levelSummary = rsi.buyLevels.join(', ');
 
   sendTelegramMessage(
-    `📊 <b>RSI Signal: ${signal.toUpperCase()}</b>\n` +
-    `RSI(${rsi.period}) = <b>${rsiValue.toFixed(2)}</b>\n` +
+    `📊 <b>RSI Signal: ${currentSignal.toUpperCase()}</b>\n` +
+    `RSI(${rsi.period}) = <b>${currentRsi.toFixed(2)}</b>\n` +
     `Market: ${slug}\n` +
     `Buying: <b>${sideLabel}</b> token\n` +
     `Order size: <b>$${config.orderSizeUsd}</b>\n` +
@@ -173,11 +187,11 @@ async function placeBuyOrder(
   try {
     const orderId = await placeLimitOrder(tokenId, OrderSide.BUY, buyPrice, size);
     if (!orderId) {
-      console.warn(`[RSI.${sideLabel}] Order placed but no orderId`);
+      logWarn(`Rsi.${sideLabel}`, `Order placed but no orderId returned`);
       return;
     }
 
-    console.log(`[RSI.${sideLabel}] BUY order placed: ${orderId} @ ${buyPrice} (${size} shares)`);
+    logInfo(`Rsi.${sideLabel}`, `BUY order placed: ${orderId} @ ${buyPrice} (${size} shares)`);
     sendTelegramMessage(
       `🟢 <b>BUY ORDER PLACED (${sideLabel})</b>\n` +
       `Price: <b>${buyPrice}</b> | Size: <b>${size}</b> shares`
@@ -192,14 +206,14 @@ async function placeBuyOrder(
 // ────────────────────────────────────────────────────────────────────────────
 
 async function monitorForFill(orderId: string, sideLabel: string, buyPrice: number): Promise<void> {
-  console.log(`[RSI.Monitor] Watching ${sideLabel} order ${orderId}...`);
+  logInfo(`Rsi.Monitor`, `Watching ${sideLabel} order ${orderId}...`);
   const startTime = Date.now();
 
   while (true) {
     await sleep(ORDER_POLL_INTERVAL_MS);
 
     if (Date.now() - startTime > ORDER_FILL_TIMEOUT_MS) {
-      console.log(`[RSI.Monitor] ${sideLabel} order ${orderId} timed out.`);
+      logWarn(`Rsi.Monitor`, `${sideLabel} order ${orderId} timed out.`);
       break;
     }
 
@@ -207,13 +221,13 @@ async function monitorForFill(orderId: string, sideLabel: string, buyPrice: numb
       const { status, sizeMatched } = await fetchOrderStatus(orderId);
 
       if (status === 'not_found') {
-        console.log(`[RSI.Monitor] ${sideLabel} order ${orderId} gone.`);
+        logInfo(`Rsi.Monitor`, `${sideLabel} order ${orderId} gone (cancelled).`);
         break;
       }
 
       const isFilled = status === 'MATCHED' || status === 'filled' || status === 'closed';
       if (isFilled && sizeMatched > 0) {
-        console.log(`[RSI.Monitor] ${sideLabel} FILLED — ${sizeMatched} shares`);
+        logInfo(`Rsi.Monitor`, `${sideLabel} FILLED — ${sizeMatched} shares`);
         sendTelegramMessage(
           `🟡 <b>BUY FILLED (${sideLabel})</b>\n` +
           `Filled: <b>${sizeMatched}</b> shares @ ${buyPrice}`
@@ -241,7 +255,7 @@ async function fetchBinanceKlines(symbol: string, interval: string, limit: numbe
     const response = await fetch(url);
 
     if (!response.ok) {
-      console.error(`[RSI.Binance] HTTP ${response.status}: ${response.statusText}`);
+      logError('Rsi.Binance', `HTTP ${response.status}: ${response.statusText}`);
       return [];
     }
 
