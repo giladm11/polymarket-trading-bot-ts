@@ -83,7 +83,7 @@ function registerCommands(bot: TelegramBot) {
     const config = loadConfig();
     config.orderSizeUsd = val;
     saveConfig(config);
-    bot.sendMessage(id, `✅ Order size updated to <b>$${val}</b>/level/side`, { parse_mode: 'HTML' });
+    bot.sendMessage(id, `✅ Order size updated to <b>$${val}</b>`, { parse_mode: 'HTML' });
   });
 
   bot.onText(/^\/setbuy ([\d.]+)/, (msg, match) => {

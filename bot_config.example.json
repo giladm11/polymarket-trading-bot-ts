@@ -8,7 +8,7 @@
     "interval": "15m",
     "period": 6,
     "overbought": 83,
-    "oversold": 13,
+    "oversold": 17,
     "buyLevels": [0.50, 0.40]
   }
 }
