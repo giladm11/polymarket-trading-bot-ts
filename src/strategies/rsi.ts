@@ -67,9 +67,9 @@ async function checkAndTrade() {
   const lastKline = allKlines[allKlines.length - 1];
   const lastKlineTime = lastKline.openTime;
 
-  // Expected open time of the current candle
-  const expectedCurrentOpen = new Date(now);
-  expectedCurrentOpen.setMinutes(Math.floor(now.getMinutes() / intervalMinutes) * intervalMinutes, 0, 0);
+  // Expected open time of the current candle (no setMinutes — avoids hour-boundary issues)
+  const intervalMs = intervalMinutes * 60 * 1000;
+  const expectedCurrentOpen = new Date(now.getTime() - (now.getTime() % intervalMs));
 
   const isNewCandle = lastKlineTime >= expectedCurrentOpen.getTime();
 
@@ -124,14 +124,8 @@ async function checkAndTrade() {
   const sideLabel = currentSignal === 'overbought' ? 'DOWN' : 'UP';
   logInfo('RSI', `Signal: ${currentSignal} → buying ${sideLabel}${multiplier > 1 ? ` (${multiplier}x — consecutive signal)` : ''}`);
 
-  // Find next candle
-  const nextCandle = new Date(now);
-  nextCandle.setMinutes(Math.ceil((now.getMinutes() + 1) / intervalMinutes) * intervalMinutes, 0, 0);
-  if (nextCandle <= now) {
-    nextCandle.setMinutes(nextCandle.getMinutes() + intervalMinutes);
-  }
-
-  const slug = buildMarketSlug(nextCandle, intervalMinutes);
+  // Use the current candle's open time (the one that triggered the signal)
+  const slug = buildMarketSlug(expectedCurrentOpen, intervalMinutes);
   logInfo('RSI', `Looking for market: ${slug}`);
 
   const market = await getMarketBySlug(slug);
