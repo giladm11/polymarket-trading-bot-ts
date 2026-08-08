@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { getMarketBySlug, placeLimitOrder, fetchOrderStatus } from '../polymarket.js';
+import { getMarketBySlug, placeLimitOrder, fetchOrderStatus, buildMarketSlug } from '../polymarket.js';
 import { loadConfig } from '../config.js';
 import { sendTelegramMessage } from '../telegram.js';
 import { logError, logInfo, logDebug, logWarn } from '../logger.js';
@@ -305,28 +305,6 @@ function calculateRsi(closes: number[], period: number): number {
 
   const rs = avgGain / avgLoss;
   return 100 - (100 / (1 + rs));
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-
-function buildMarketSlug(openTime: Date, intervalMinutes: number): string {
-  // For 15-min and 5-min markets, Polymarket uses: btc-updown-{interval}m-{unix_timestamp}
-  if (intervalMinutes === 15 || intervalMinutes === 5) {
-    const unixSec = Math.floor(openTime.getTime() / 1000);
-    return `btc-updown-${intervalMinutes}m-${unixSec}`;
-  }
-
-  // Hourly markets use: bitcoin-up-or-down-{month}-{day}-{year}-{hour}{ampm}-et
-  const timeZone = 'America/New_York';
-  const zonedDate = toZonedTime(openTime, timeZone);
-
-  const month = format(zonedDate, 'MMMM', { timeZone }).toLowerCase();
-  const day = zonedDate.getDate();
-  const year = zonedDate.getFullYear();
-  const hourStr = format(zonedDate, 'h', { timeZone });
-  const ampm = format(zonedDate, 'a', { timeZone }).toLowerCase();
-
-  return `bitcoin-up-or-down-${month}-${day}-${year}-${hourStr}${ampm}-et`;
 }
 
 // ────────────────────────────────────────────────────────────────────────────

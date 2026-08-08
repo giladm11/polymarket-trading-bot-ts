@@ -1,6 +1,7 @@
 import { createSecureClient, OrderSide } from '@polymarket/client';
 import { privateKey } from '@polymarket/client/viem';
 import { logError, logInfo, logWarn } from './logger.js';
+import { toZonedTime, format } from 'date-fns-tz';
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -45,6 +46,26 @@ export async function initPolymarket() {
   })();
 
   await initPromise;
+}
+
+export function buildMarketSlug(openTime: Date, intervalMinutes: number): string {
+  // For 15-min and 5-min markets, Polymarket uses: btc-updown-{interval}m-{unix_timestamp}
+  if (intervalMinutes === 15 || intervalMinutes === 5) {
+    const unixSec = Math.floor(openTime.getTime() / 1000);
+    return `btc-updown-${intervalMinutes}m-${unixSec}`;
+  }
+
+  // Hourly markets use: bitcoin-up-or-down-{month}-{day}-{year}-{hour}{ampm}-et
+  const timeZone = 'America/New_York';
+  const zonedDate = toZonedTime(openTime, timeZone);
+
+  const month = format(zonedDate, 'MMMM', { timeZone }).toLowerCase();
+  const day = zonedDate.getDate();
+  const year = zonedDate.getFullYear();
+  const hourStr = format(zonedDate, 'h', { timeZone });
+  const ampm = format(zonedDate, 'a', { timeZone }).toLowerCase();
+
+  return `bitcoin-up-or-down-${month}-${day}-${year}-${hourStr}${ampm}-et`;
 }
 
 export async function getMarketBySlug(slug: string) {

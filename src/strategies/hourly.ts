@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { getMarketBySlug, placeLimitOrder, fetchOrderStatus, getBalance } from '../polymarket.js';
+import { getMarketBySlug, placeLimitOrder, fetchOrderStatus, getBalance, buildMarketSlug } from '../polymarket.js';
 import { loadConfig } from '../config.js';
 import { sendTelegramMessage } from '../telegram.js';
 import { logError, logInfo, logWarn } from '../logger.js';
@@ -57,7 +57,7 @@ async function tryEnterNextMarket() {
   const targetTs = Math.floor(nextHour.getTime() / 1000);
   if (enteredCycles.has(targetTs)) return;
 
-  const slug = buildMarketSlug(nextHour);
+  const slug = buildMarketSlug(nextHour, 60);
   logInfo('Hourly', `Looking for market slug: ${slug}`);
 
   isEntering = true;
@@ -238,21 +238,6 @@ async function monitorForSellFill(orderId: string, sideLabel: string, size: numb
       logError(`Hourly.Monitor.Sell.${sideLabel}`, e);
     }
   }
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-
-function buildMarketSlug(openTime: Date): string {
-  const timeZone = 'America/New_York';
-  const zonedDate = toZonedTime(openTime, timeZone);
-
-  const month = format(zonedDate, 'MMMM', { timeZone }).toLowerCase();
-  const day = zonedDate.getDate();
-  const year = zonedDate.getFullYear();
-  const hourStr = format(zonedDate, 'h', { timeZone });
-  const ampm = format(zonedDate, 'a', { timeZone }).toLowerCase();
-
-  return `bitcoin-up-or-down-${month}-${day}-${year}-${hourStr}${ampm}-et`;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
