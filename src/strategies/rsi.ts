@@ -310,6 +310,13 @@ function calculateRsi(closes: number[], period: number): number {
 // ────────────────────────────────────────────────────────────────────────────
 
 function buildMarketSlug(openTime: Date, intervalMinutes: number): string {
+  // For 15-min and 5-min markets, Polymarket uses: btc-updown-{interval}m-{unix_timestamp}
+  if (intervalMinutes === 15 || intervalMinutes === 5) {
+    const unixSec = Math.floor(openTime.getTime() / 1000);
+    return `btc-updown-${intervalMinutes}m-${unixSec}`;
+  }
+
+  // Hourly markets use: bitcoin-up-or-down-{month}-{day}-{year}-{hour}{ampm}-et
   const timeZone = 'America/New_York';
   const zonedDate = toZonedTime(openTime, timeZone);
 
@@ -318,11 +325,6 @@ function buildMarketSlug(openTime: Date, intervalMinutes: number): string {
   const year = zonedDate.getFullYear();
   const hourStr = format(zonedDate, 'h', { timeZone });
   const ampm = format(zonedDate, 'a', { timeZone }).toLowerCase();
-  const minute = zonedDate.getMinutes();
-
-  if (intervalMinutes === 15) {
-    return `bitcoin-up-or-down-15-min-${month}-${day}-${year}-${hourStr}${minute.toString().padStart(2, '0')}${ampm}-et`;
-  }
 
   return `bitcoin-up-or-down-${month}-${day}-${year}-${hourStr}${ampm}-et`;
 }
