@@ -143,6 +143,12 @@ async function checkAndTrade() {
 
   const levelSummary = rsi.buyLevels.join(', ');
 
+  // Place buy orders for each level
+  for (const buyPrice of rsi.buyLevels) {
+    const size = parseFloat(((config.orderSizeUsd * multiplier) / buyPrice).toFixed(2));
+    placeBuyOrder(targetTokenId, buyPrice, size, sideLabel).catch(err1 => logError(`Rsi.BuyOrder.${sideLabel}`, err1));
+  }
+
   sendTelegramMessage(
     `📊 <b>RSI Signal: ${currentSignal.toUpperCase()}</b>\n` +
     `RSI(${rsi.period}) = <b>${currentRsi.toFixed(2)}</b>\n` +
@@ -151,12 +157,6 @@ async function checkAndTrade() {
     `Order size: <b>$${config.orderSizeUsd * multiplier}</b>${multiplier > 1 ? ` (${multiplier}x consecutive)` : ''}\n` +
     `Buy prices: ${levelSummary}`
   );
-
-  // Place buy orders for each level
-  for (const buyPrice of rsi.buyLevels) {
-    const size = parseFloat(((config.orderSizeUsd * multiplier) / buyPrice).toFixed(2));
-    placeBuyOrder(targetTokenId, buyPrice, size, sideLabel).catch(err1 => logError(`Rsi.BuyOrder.${sideLabel}`, err1));
-  }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
