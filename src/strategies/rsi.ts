@@ -143,11 +143,15 @@ async function checkAndTrade() {
 
   const levelSummary = rsi.buyLevels.join(', ');
 
-  // Place buy orders for each level
-  for (const buyPrice of rsi.buyLevels) {
-    const size = parseFloat(((config.orderSizeUsd * multiplier) / buyPrice).toFixed(2));
-    placeBuyOrder(targetTokenId, buyPrice, size, sideLabel).catch(err1 => logError(`Rsi.BuyOrder.${sideLabel}`, err1));
+
+  if (config.orderSizeUsd && config.orderSizeUsd > 0) {
+    // Place buy orders for each level
+    for (const buyPrice of rsi.buyLevels) {
+      const size = parseFloat(((config.orderSizeUsd * multiplier) / buyPrice).toFixed(2));
+      placeBuyOrder(targetTokenId, buyPrice, size, sideLabel).catch(err1 => logError(`Rsi.BuyOrder.${sideLabel}`, err1));
+    }
   }
+
 
   sendTelegramMessage(
     `📊 <b>RSI Signal: ${currentSignal.toUpperCase()}</b>\n` +
