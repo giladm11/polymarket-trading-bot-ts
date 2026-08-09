@@ -120,7 +120,10 @@ export async function fetchOrderStatus(orderId: string): Promise<{ status: strin
   if (!client) await initPolymarket();
   try {
     const order = await client.fetchOrder({ orderId });
-    // The SDK returns an OpenOrder with status field
+    // SDK may return null while order is being processed
+    if (!order) {
+      return { status: 'pending', sizeMatched: 0 };
+    }
     const status: string = order.status ?? 'unknown';
     const sizeMatched: number = parseFloat(order.sizeMatched ?? order.matched_amount ?? '0');
     return { status, sizeMatched };
@@ -129,6 +132,10 @@ export async function fetchOrderStatus(orderId: string): Promise<{ status: strin
     // Order 404 means it's been cancelled/resolved — expected, not an error
     if (msg.includes('404') || msg.includes('not found')) {
       return { status: 'not_found', sizeMatched: 0 };
+    }
+    // SDK throws on null/malformed response — treat as pending
+    if (msg.includes('null') || msg.includes('incompatible')) {
+      return { status: 'pending', sizeMatched: 0 };
     }
     logError('Polymarket.fetchOrderStatus', e);
     throw e;
