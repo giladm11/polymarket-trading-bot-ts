@@ -10,17 +10,11 @@ import { toZonedTime, format } from 'date-fns-tz';
 const ORDER_POLL_INTERVAL_MS = 15_000;
 const ORDER_FILL_TIMEOUT_MS = 30 * 60 * 1000;
 
-const enteredCandles = new Set<string>();
-
 // ────────────────────────────────────────────────────────────────────────────
 
 export function startRsiStrategy() {
   cron.schedule('* * * * *', async () => {
-    try {
-      await checkAndTrade();
-    } catch (e: unknown) {
-      logError('RsiStrategy', e);
-    }
+    checkAndTrade().catch(e => logError('RsiStrategy', e));
   });
 
   const config = loadConfig();
@@ -50,9 +44,6 @@ async function checkAndTrade() {
   }
 
   const candleKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${Math.floor(minutes / intervalMinutes)}`;
-  if (enteredCandles.has(candleKey)) {
-    return;
-  }
 
   logInfo('RSI', `✅ Candle boundary: ${candleKey}`);
 
@@ -116,8 +107,6 @@ async function checkAndTrade() {
     return;
   }
 
-  enteredCandles.add(candleKey);
-
   // If previous candle had the same signal, triple the order size
   const multiplier = currentSignal === prevSignal ? 3 : 1;
 
@@ -166,7 +155,7 @@ async function checkAndTrade() {
   // Place buy orders for each level
   for (const buyPrice of rsi.buyLevels) {
     const size = parseFloat(((config.orderSizeUsd * multiplier) / buyPrice).toFixed(2));
-    await placeBuyOrder(targetTokenId, buyPrice, size, sideLabel);
+    placeBuyOrder(targetTokenId, buyPrice, size, sideLabel).catch(err1 => logError(`Rsi.BuyOrder.${sideLabel}`, err1));
   }
 }
 
@@ -338,7 +327,7 @@ function extractTokenIds(market: unknown): { up?: string; down?: string } {
       if ((l === 'down' || l === 'no') && tokenIds[idx]) result.down = tokenIds[idx];
     });
     if (result.up && result.down) return result;
-  } catch {}
+  } catch { }
 
   if (Array.isArray(m.tokens)) {
     for (const t of m.tokens as Array<Record<string, unknown>>) {
