@@ -4,11 +4,11 @@ import { loadConfig } from '../config.js';
 import { sendTelegramMessage } from '../telegram.js';
 import { logError, logInfo, logDebug, logWarn } from '../logger.js';
 import { OrderSide } from '@polymarket/client';
-import { toZonedTime, format } from 'date-fns-tz';
 
 // --- Constants ---
 const ORDER_POLL_INTERVAL_MS = 15_000;
 const ORDER_FILL_TIMEOUT_MS = 30 * 60 * 1000;
+let blockTrading = false;
 
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -103,15 +103,25 @@ async function checkAndTrade() {
   else if (prevRsi < rsi.oversold) prevSignal = 'oversold';
 
   if (!currentSignal) {
+    blockTrading = false;
     logInfo('RSI', `No signal on current candle.`);
     return;
   }
 
-  // If previous candle had the same signal, triple the order size
-  const multiplier = currentSignal === prevSignal ? 3 : 1;
+  if (currentSignal != prevSignal) {
+    logInfo('RSI', `No signal on previous candle.`);
+    return;
+  }
+
+  if (blockTrading) {
+    logInfo('RSI', `Trading is blocked, enetered position already.`);
+    return;
+  }
+
+  blockTrading = true;
 
   const sideLabel = currentSignal === 'overbought' ? 'DOWN' : 'UP';
-  logInfo('RSI', `Signal: ${currentSignal} → buying ${sideLabel}${multiplier > 1 ? ` (${multiplier}x — consecutive signal)` : ''}`);
+  logInfo('RSI', `Signal: ${currentSignal} → buying ${sideLabel}}`);
 
   // Use the current candle's open time (the one that triggered the signal)
   const slug = buildMarketSlug(expectedCurrentOpen, intervalMinutes);
@@ -147,7 +157,7 @@ async function checkAndTrade() {
   if (config.orderSizeUsd && config.orderSizeUsd > 0) {
     // Place buy orders for each level
     for (const buyPrice of rsi.buyLevels) {
-      const size = parseFloat(((config.orderSizeUsd * multiplier) / buyPrice).toFixed(2));
+      const size = parseFloat(((config.orderSizeUsd) / buyPrice).toFixed(2));
       placeBuyOrder(targetTokenId, buyPrice, size, sideLabel).catch(err1 => logError(`Rsi.BuyOrder.${sideLabel}`, err1));
     }
   }
@@ -158,7 +168,7 @@ async function checkAndTrade() {
     `RSI(${rsi.period}) = <b>${currentRsi.toFixed(2)}</b>\n` +
     `Market: ${slug}\n` +
     `Buying: <b>${sideLabel}</b> token\n` +
-    `Order size: <b>$${config.orderSizeUsd * multiplier}</b>${multiplier > 1 ? ` (${multiplier}x consecutive)` : ''}\n` +
+    `Order size: <b>$${config.orderSizeUsd}</b>\n` +
     `Buy prices: ${levelSummary}`
   );
 }
@@ -172,7 +182,9 @@ async function placeBuyOrder(
   sideLabel: 'UP' | 'DOWN',
 ): Promise<void> {
   try {
-    const orderId = await placeLimitOrder(tokenId, OrderSide.BUY, buyPrice, size);
+    // Order is valid for 5 minutes only (good-for-5m), then expires.
+    const expiration = Math.floor(Date.now() / 1000) + (5 * 60);
+    const orderId = await placeLimitOrder(tokenId, OrderSide.BUY, buyPrice, size, expiration);
     if (!orderId) {
       logWarn(`Rsi.${sideLabel}`, `Order placed but no orderId returned`);
       return;
@@ -181,7 +193,8 @@ async function placeBuyOrder(
     logInfo(`Rsi.${sideLabel}`, `BUY order placed: ${orderId} @ ${buyPrice} (${size} shares)`);
     sendTelegramMessage(
       `🟢 <b>BUY ORDER PLACED (${sideLabel})</b>\n` +
-      `Price: <b>${buyPrice}</b> | Size: <b>${size}</b> shares`
+      `Price: <b>${buyPrice}</b> | Size: <b>${size}</b> shares\n` +
+      `Expires in: <b>5 min</b>`
     );
 
     void monitorForFill(orderId, sideLabel, buyPrice);
