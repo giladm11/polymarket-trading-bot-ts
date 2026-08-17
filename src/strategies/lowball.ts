@@ -64,6 +64,10 @@ async function tryEnterNextMarkets() {
   const lb = config.lowball;
   const intervalMs = lb.intervalMinutes * 60 * 1000;
 
+  if (!config.orderSizeUsd) {
+    return;
+  }
+
   const now = new Date();
   const nextBoundary = new Date(Math.ceil(now.getTime() / intervalMs) * intervalMs);
   const msUntil = nextBoundary.getTime() - now.getTime();
@@ -199,7 +203,10 @@ async function monitorBuyFill(tracked: TrackedBuy): Promise<void> {
           `Cost: <b>$${(sizeMatched * buyPrice).toFixed(2)}</b>`
         );
 
-        await doSellOrder(tokenId, sizeMatched, buyPrice, sideLabel, symbol, lb, marketEndTs);
+        if (lb.sellFraction) {
+          await doSellOrder(tokenId, sizeMatched, buyPrice, sideLabel, symbol, lb, marketEndTs);
+        }
+        
         break;
       }
     } catch (e: unknown) {
