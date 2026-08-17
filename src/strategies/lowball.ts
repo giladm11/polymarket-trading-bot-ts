@@ -12,7 +12,7 @@ import { OrderSide } from '@polymarket/client';
 const ORDER_POLL_INTERVAL_MS = 1_000;
 const SAFETY_BUFFER_MS = 30_000; // stop watching a buy 30s after its exchange expiry
 const MAX_SELL_WAIT_MS = 24 * 60 * 60 * 1000; // GTC sell — watch up to 24h
-const SELL_DELAY_MS = 1_000; // wait after a buy fills before placing the sell
+const SELL_DELAY_MS = 3_000; // wait after a buy fills before placing the sell
 
 const enteredCycles = new Set<string>(); // `${symbol}:${boundaryTs}`
 // When each tracked market cycle ends (unix seconds). Used to prune enteredCycles

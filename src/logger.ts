@@ -19,19 +19,23 @@ function shouldLog(level: LogLevel): boolean {
 /**
  * Central logger — every error goes to both console AND Telegram.
  */
-export function logError(context: string, e: unknown): void {
+export function logError(context: string, e: unknown, skipTelegram?: boolean): void {
   if (!shouldLog('error')) return;
   const msg = e instanceof Error
     ? `${e.message}${e.stack ? `\n${e.stack.split('\n').slice(1, 3).join('\n')}` : ''}`
     : String(e);
   console.error(`[${context}]`, msg);
-  sendTelegramMessage(`🔴 <b>ERROR [${context}]</b>\n${escapeHtml(msg)}`);
+  if (!skipTelegram) {
+    sendTelegramMessage(`🔴 <b>ERROR [${context}]</b>\n${escapeHtml(msg)}`);
+  }
 }
 
-export function logWarn(context: string, msg: string): void {
+export function logWarn(context: string, msg: string, skipTelegram?: boolean): void {
   if (!shouldLog('warn')) return;
   console.warn(`[${context}] ${msg}`);
-  sendTelegramMessage(`⚠️ <b>WARN [${context}]</b> ${escapeHtml(msg)}`);
+  if (!skipTelegram) {
+    sendTelegramMessage(`⚠️ <b>WARN [${context}]</b> ${escapeHtml(msg)}`);
+  }
 }
 
 export function logInfo(context: string, msg: string): void {

@@ -91,7 +91,8 @@ export async function placeLimitOrder(
   side: OrderSide,
   price: number,
   size: number,
-  expiration?: number  // Unix timestamp in seconds — omit for GTC
+  expiration?: number,  // Unix timestamp in seconds — omit for GTC
+  skipTelegram?: boolean,
 ): Promise<string> {
   if (!client) await initPolymarket();
   try {
@@ -108,7 +109,7 @@ export async function placeLimitOrder(
     return response.orderId;
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    logError('Polymarket.placeLimitOrder', e);
+    logError('Polymarket.placeLimitOrder', e, skipTelegram);
     throw e;
   }
 }
@@ -137,7 +138,7 @@ export async function placeLimitOrderWithRetry(
     } catch (e: unknown) {
       lastErr = e;
     }
-    logWarn('Polymarket.placeLimitOrderWithRetry', `Attempt ${attempt}/${ORDER_PLACE_MAX_RETRIES} failed: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
+    logWarn('Polymarket.placeLimitOrderWithRetry', `Attempt ${attempt}/${ORDER_PLACE_MAX_RETRIES} failed: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`, true);
     if (attempt < ORDER_PLACE_MAX_RETRIES) {
       await sleep(ORDER_PLACE_RETRY_DELAY_MS);
     }
