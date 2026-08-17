@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-export type StrategyName = 'hourly' | 'rsi';
+export type StrategyName = 'hourly' | 'rsi' | 'lowball';
 
 export interface RsiConfig {
   symbol: string;
@@ -13,12 +13,23 @@ export interface RsiConfig {
   buyLevels: number[];
 }
 
+export interface LowballConfig {
+  symbols: string[];          // e.g. ['BTC', 'SOL']
+  intervalMinutes: number;    // 15
+  preMarketMinutes: number;   // place this many minutes before market open
+  buyLevels: number[];        // e.g. [0.25, 0.20]
+  buyExpirySeconds: number;   // buy order time-in-force (e.g. 60)
+  sellMultiplier: number;     // sell price = buyPrice * sellMultiplier (e.g. 2)
+  sellFraction: number;       // fraction of a fill to sell (e.g. 0.5)
+}
+
 export interface BotConfig {
   orderSizeUsd: number;
   buyPrice: number;
   sellPrice: number;
   activeStrategy: StrategyName;
   rsi: RsiConfig;
+  lowball: LowballConfig;
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -36,6 +47,15 @@ const DEFAULT_CONFIG: BotConfig = {
     overbought: 83,
     oversold: 13,
     buyLevels: [0.50, 0.40],
+  },
+  lowball: {
+    symbols: ['BTC'],
+    intervalMinutes: 15,
+    preMarketMinutes: 5,
+    buyLevels: [0.25, 0.20, 0.15],
+    buyExpirySeconds: 60,
+    sellMultiplier: 2,
+    sellFraction: 0.5,
   },
 };
 
@@ -97,4 +117,50 @@ export function removeRsiBuyLevel(index: number): void {
     config.rsi.buyLevels.splice(index, 1);
     saveConfig(config);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lowball config helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function updateLowballConfig(updates: Partial<LowballConfig>): void {
+  const config = loadConfig();
+  config.lowball = { ...config.lowball, ...updates };
+  saveConfig(config);
+}
+
+export function setLowballSymbols(symbols: string[]): void {
+  const config = loadConfig();
+  config.lowball.symbols = symbols.map(s => s.toUpperCase());
+  saveConfig(config);
+}
+
+export function setLowballBuyLevels(levels: number[]): void {
+  const config = loadConfig();
+  config.lowball.buyLevels = levels;
+  saveConfig(config);
+}
+
+export function setLowballMultiplier(multiplier: number): void {
+  const config = loadConfig();
+  config.lowball.sellMultiplier = multiplier;
+  saveConfig(config);
+}
+
+export function setLowballFraction(fraction: number): void {
+  const config = loadConfig();
+  config.lowball.sellFraction = fraction;
+  saveConfig(config);
+}
+
+export function setLowballPreMarket(minutes: number): void {
+  const config = loadConfig();
+  config.lowball.preMarketMinutes = minutes;
+  saveConfig(config);
+}
+
+export function setLowballExpiry(seconds: number): void {
+  const config = loadConfig();
+  config.lowball.buyExpirySeconds = seconds;
+  saveConfig(config);
 }

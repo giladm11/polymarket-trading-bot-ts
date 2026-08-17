@@ -2,6 +2,8 @@ import TelegramBot from 'node-telegram-bot-api';
 import {
   loadConfig, saveConfig,
   setActiveStrategy, updateRsiConfig, setRsiBuyLevel, removeRsiBuyLevel,
+  updateLowballConfig, setLowballSymbols, setLowballBuyLevels,
+  setLowballMultiplier, setLowballFraction, setLowballPreMarket, setLowballExpiry,
 } from './config.js';
 import type { StrategyName } from './config.js';
 import { getBalance } from './polymarket.js';
@@ -69,6 +71,22 @@ function registerCommands(bot: TelegramBot) {
         `Buy Prices:\n${levels}`;
     }
 
+    if (config.activeStrategy === 'lowball') {
+      const lb = config.lowball;
+      const levels = lb.buyLevels.map((l, i) => `  L${i}: ${l}`).join('\n');
+      const totalExposure = lb.symbols.length * 2 * lb.buyLevels.length * config.orderSizeUsd;
+
+      text +=
+        `\n\n🔻 <b>Lowball Settings</b>\n` +
+        `Symbols: <b>${lb.symbols.join(', ')}</b>\n` +
+        `Interval: <b>${lb.intervalMinutes}m</b>\n` +
+        `Pre-market: <b>${lb.preMarketMinutes} min</b>\n` +
+        `Buy TTL: <b>${lb.buyExpirySeconds}s</b>\n` +
+        `Sell @ <b>${lb.sellMultiplier}x</b> | Sell <b>${lb.sellFraction * 100}%</b>\n` +
+        `Max Exposure: <b>$${totalExposure}</b>\n\n` +
+        `Buy Prices:\n${levels}`;
+    }
+
     bot.sendMessage(id, text, { parse_mode: 'HTML' });
   });
 
@@ -130,12 +148,13 @@ function registerCommands(bot: TelegramBot) {
     const id = msg.chat.id.toString();
     const strategy = match?.[1]?.toLowerCase();
 
-    if (!strategy || !['hourly', 'rsi'].includes(strategy)) {
+    if (!strategy || !['hourly', 'rsi', 'lowball'].includes(strategy)) {
       bot.sendMessage(id,
         '⚠️ Usage: /strategy <name>\n\n' +
         'Available strategies:\n' +
         '  • <b>hourly</b> — Fixed price per hour\n' +
-        '  • <b>rsi</b> — RSI-based BTC signals',
+        '  • <b>rsi</b> — RSI-based BTC signals\n' +
+        '  • <b>lowball</b> — Pre-market dip buys on 15m BTC/SOL',
         { parse_mode: 'HTML' }
       );
       return;
@@ -240,6 +259,102 @@ function registerCommands(bot: TelegramBot) {
     const newConfig = loadConfig();
     bot.sendMessage(id, `✅ Removed RSI level ${index}. Remaining: ${newConfig.rsi.buyLevels.length}`, { parse_mode: 'HTML' });
   });
+
+  // ── Lowball Commands ──
+
+  bot.onText(/^\/lowballview/, (msg) => {
+    const id = msg.chat.id.toString();
+    const config = loadConfig();
+    const lb = config.lowball;
+    const levels = lb.buyLevels.map((l, i) => `  L${i}: ${l}`).join('\n');
+    const totalExposure = lb.symbols.length * 2 * lb.buyLevels.length * config.orderSizeUsd;
+
+    bot.sendMessage(id,
+      `🔻 <b>Lowball Strategy Config</b>\n\n` +
+      `Symbols: <b>${lb.symbols.join(', ')}</b>\n` +
+      `Interval: <b>${lb.intervalMinutes}m</b>\n` +
+      `Pre-market: <b>${lb.preMarketMinutes} min</b>\n` +
+      `Buy Levels: ${levels}\n` +
+      `Buy TTL: <b>${lb.buyExpirySeconds}s</b>\n` +
+      `Sell Multiplier: <b>${lb.sellMultiplier}x</b>\n` +
+      `Sell Fraction: <b>${lb.sellFraction * 100}%</b>\n` +
+      `Order Size: <b>$${config.orderSizeUsd}</b>\n` +
+      `Max Exposure: <b>$${totalExposure}</b>`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
+  bot.onText(/^\/lowballsymbols (.+)/, (msg, match) => {
+    const id = msg.chat.id.toString();
+    if (!match?.[1]) return;
+    const symbols = match[1].split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+    if (symbols.length === 0) {
+      bot.sendMessage(id, '❌ Usage: /lowballsymbols BTC,SOL');
+      return;
+    }
+    setLowballSymbols(symbols);
+    bot.sendMessage(id, `✅ Lowball symbols set to <b>${symbols.join(', ')}</b>`, { parse_mode: 'HTML' });
+  });
+
+  bot.onText(/^\/lowballlevels (.+)/, (msg, match) => {
+    const id = msg.chat.id.toString();
+    if (!match?.[1]) return;
+    const levels = match[1].split(/\s+/).map(s => parseFloat(s));
+    if (levels.some(n => isNaN(n) || n <= 0 || n >= 1)) {
+      bot.sendMessage(id, '❌ All levels must be between 0 and 1. Usage: /lowballlevels 0.25 0.20');
+      return;
+    }
+    setLowballBuyLevels(levels);
+    bot.sendMessage(id, `✅ Lowball buy levels: <b>${levels.join(', ')}</b>`, { parse_mode: 'HTML' });
+  });
+
+  bot.onText(/^\/lowballmult ([\d.]+)/, (msg, match) => {
+    const id = msg.chat.id.toString();
+    if (!match?.[1]) return;
+    const val = parseFloat(match[1]);
+    if (isNaN(val) || val <= 0) {
+      bot.sendMessage(id, '❌ Multiplier must be > 0. Usage: /lowballmult 2');
+      return;
+    }
+    setLowballMultiplier(val);
+    bot.sendMessage(id, `✅ Lowball sell multiplier set to <b>${val}x</b>`, { parse_mode: 'HTML' });
+  });
+
+  bot.onText(/^\/lowballfrac ([\d.]+)/, (msg, match) => {
+    const id = msg.chat.id.toString();
+    if (!match?.[1]) return;
+    const val = parseFloat(match[1]);
+    if (isNaN(val) || val <= 0 || val > 1) {
+      bot.sendMessage(id, '❌ Fraction must be between 0 and 1. Usage: /lowballfrac 0.5');
+      return;
+    }
+    setLowballFraction(val);
+    bot.sendMessage(id, `✅ Lowball sell fraction set to <b>${val * 100}%</b>`, { parse_mode: 'HTML' });
+  });
+
+  bot.onText(/^\/lowballpremarket (\d+)/, (msg, match) => {
+    const id = msg.chat.id.toString();
+    if (!match?.[1]) return;
+    const val = parseInt(match[1]);
+    if (isNaN(val) || val < 1) {
+      bot.sendMessage(id, '❌ Pre-market minutes must be ≥ 1. Usage: /lowballpremarket 1');
+      return;
+    }
+    setLowballPreMarket(val);
+    bot.sendMessage(id, `✅ Lowball pre-market window set to <b>${val} min</b>`, { parse_mode: 'HTML' });
+  });
+
+  bot.onText(/^\/lowballexpiry (\d+)/, (msg, match) => {
+    const id = msg.chat.id.toString();
+    if (!match?.[1]) return;
+    const val = parseInt(match[1]);
+    if (isNaN(val) || val < 1) {
+      bot.sendMessage(id, '❌ Expiry must be ≥ 1 second. Usage: /lowballexpiry 60');
+      return;
+    }
+    setLowballExpiry(val);
+    bot.sendMessage(id, `✅ Lowball buy TTL set to <b>${val}s</b>`, { parse_mode: 'HTML' });
+  });
 }
 
 function getHelpText(): string {
@@ -260,6 +375,14 @@ function getHelpText(): string {
     `/rsios &lt;val&gt; — Set oversold threshold\n` +
     `/rsilevel &lt;idx&gt; &lt;price&gt; — Add/update buy price\n` +
     `/rsiremove &lt;idx&gt; — Remove a buy level\n\n` +
+    `<b>Lowball Strategy</b>\n` +
+    `/lowballview — View lowball config\n` +
+    `/lowballsymbols &lt;BTC,SOL&gt; — Set symbols\n` +
+    `/lowballlevels &lt;0.25 0.20&gt; — Set buy levels\n` +
+    `/lowballmult &lt;n&gt; — Set sell multiplier\n` +
+    `/lowballfrac &lt;0.5&gt; — Set sell fraction\n` +
+    `/lowballpremarket &lt;min&gt; — Pre-market window\n` +
+    `/lowballexpiry &lt;sec&gt; — Buy order TTL\n\n` +
     `/help — Show this message`
   );
 }

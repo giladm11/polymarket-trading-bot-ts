@@ -10,5 +10,14 @@
     "overbought": 83,
     "oversold": 17,
     "buyLevels": [0.50, 0.40]
+  },
+  "lowball": {
+    "symbols": ["BTC", "SOL"],
+    "intervalMinutes": 15,
+    "preMarketMinutes": 5,
+    "buyLevels": [0.25, 0.20],
+    "buyExpirySeconds": 60,
+    "sellMultiplier": 2,
+    "sellFraction": 0.5
   }
 }

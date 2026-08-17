@@ -48,11 +48,12 @@ export async function initPolymarket() {
   await initPromise;
 }
 
-export function buildMarketSlug(openTime: Date, intervalMinutes: number): string {
-  // For 15-min and 5-min markets, Polymarket uses: btc-updown-{interval}m-{unix_timestamp}
+export function buildMarketSlug(openTime: Date, intervalMinutes: number, symbol: string = 'BTC'): string {
+  // For 15-min and 5-min markets, Polymarket uses: {symbol}-updown-{interval}m-{unix_timestamp}
+  // e.g. btc-updown-15m-<unix>, sol-updown-15m-<unix>
   if (intervalMinutes === 15 || intervalMinutes === 5) {
     const unixSec = Math.floor(openTime.getTime() / 1000);
-    return `btc-updown-${intervalMinutes}m-${unixSec}`;
+    return `${symbol.toLowerCase()}-updown-${intervalMinutes}m-${unixSec}`;
   }
 
   // Hourly markets use: bitcoin-up-or-down-{month}-{day}-{year}-{hour}{ampm}-et
