@@ -132,7 +132,7 @@ export async function placeLimitOrderWithRetry(
   let lastErr: unknown;
   for (let attempt = 1; attempt <= ORDER_PLACE_MAX_RETRIES; attempt++) {
     try {
-      const orderId = await placeLimitOrder(tokenId, side, price, size, expiration);
+      const orderId = await placeLimitOrder(tokenId, side, price, size, expiration, true);
       if (orderId) return orderId;
       lastErr = new Error('placeLimitOrder returned no orderId');
     } catch (e: unknown) {
