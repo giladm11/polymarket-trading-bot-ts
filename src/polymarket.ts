@@ -113,6 +113,42 @@ export async function placeLimitOrder(
   }
 }
 
+const ORDER_PLACE_MAX_RETRIES = 3;
+const ORDER_PLACE_RETRY_DELAY_MS = 2_000; // wait between failed place attempts
+
+/**
+ * Place a limit order with retry: up to ORDER_PLACE_MAX_RETRIES attempts,
+ * waiting ORDER_PLACE_RETRY_DELAY_MS between failures. Resolves with the order
+ * id on success, or throws the last error if every attempt fails.
+ */
+export async function placeLimitOrderWithRetry(
+  tokenId: string,
+  side: OrderSide,
+  price: number,
+  size: number,
+  expiration?: number,
+): Promise<string> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= ORDER_PLACE_MAX_RETRIES; attempt++) {
+    try {
+      const orderId = await placeLimitOrder(tokenId, side, price, size, expiration);
+      if (orderId) return orderId;
+      lastErr = new Error('placeLimitOrder returned no orderId');
+    } catch (e: unknown) {
+      lastErr = e;
+    }
+    logWarn('Polymarket.placeLimitOrderWithRetry', `Attempt ${attempt}/${ORDER_PLACE_MAX_RETRIES} failed: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
+    if (attempt < ORDER_PLACE_MAX_RETRIES) {
+      await sleep(ORDER_PLACE_RETRY_DELAY_MS);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 /**
  * Poll open orders for a specific tokenId to detect a fill.
  * Returns the filled size if the order is no longer open (i.e. fully matched).

@@ -1,9 +1,9 @@
 import cron from 'node-cron';
 import {
-  getMarketBySlug, placeLimitOrder, fetchOrderStatus, getBalance, buildMarketSlug,
+  getMarketBySlug, placeLimitOrderWithRetry, fetchOrderStatus, getBalance, buildMarketSlug,
 } from '../polymarket.js';
 import { loadConfig, type LowballConfig } from '../config.js';
-import { sendTelegramMessage } from '../telegram.js';
+import { sendTelegramMessage, sendTelegramError } from '../telegram.js';
 import { logError, logInfo, logWarn } from '../logger.js';
 import { OrderSide } from '@polymarket/client';
 
@@ -12,6 +12,7 @@ import { OrderSide } from '@polymarket/client';
 const ORDER_POLL_INTERVAL_MS = 1_000;
 const SAFETY_BUFFER_MS = 30_000; // stop watching a buy 30s after its exchange expiry
 const MAX_SELL_WAIT_MS = 24 * 60 * 60 * 1000; // GTC sell — watch up to 24h
+const SELL_DELAY_MS = 3_000; // wait after a buy fills before placing the sell
 
 const enteredCycles = new Set<string>(); // `${symbol}:${boundaryTs}`
 // When each tracked market cycle ends (unix seconds). Used to prune enteredCycles
@@ -147,12 +148,7 @@ async function doBuyOrder(
   console.log('exp', expiration);
 
   try {
-    const orderId = await placeLimitOrder(tokenId, OrderSide.BUY, buyPrice, size, expiration);
-    if (!orderId) {
-      logWarn(`Lowball.${symbol}.${sideLabel}`, `Order placed but no orderId returned`);
-      return;
-    }
-
+    const orderId = await placeLimitOrderWithRetry(tokenId, OrderSide.BUY, buyPrice, size, expiration);
     logInfo(`Lowball.${symbol}.${sideLabel}`, `BUY order placed: ${orderId} @ ${buyPrice} (${size} shares)`);
     const tracked: TrackedBuy = {
       orderId, tokenId, buyPrice, placedAt: Date.now(), sideLabel, symbol, expiration, marketEndTs,
@@ -160,7 +156,9 @@ async function doBuyOrder(
     trackedBuys.push(tracked);
     void monitorBuyFill(tracked);
   } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
     logError(`Lowball.BuyOrder.${symbol}.${sideLabel}`, e);
+    sendTelegramError(`Lowball BUY placement failed after all retries (${symbol} ${sideLabel} @ ${buyPrice}): ${msg}`);
   }
 }
 
@@ -237,13 +235,17 @@ async function doSellOrder(
   }
 
   try {
+    // Give the exchange a moment to settle the buy fill before selling.
+    await sleep(SELL_DELAY_MS);
     // No expiration → GTC: rests until the price doubles.
-    const orderId = await placeLimitOrder(tokenId, OrderSide.SELL, sellPrice, sellShares);
+    const orderId = await placeLimitOrderWithRetry(tokenId, OrderSide.SELL, sellPrice, sellShares);
     logInfo('Lowball.Sell', `[${symbol}] SELL order placed for ${sideLabel}: ${orderId} @ ${sellPrice}`);
 
     void monitorSellFill(orderId, sideLabel, sellShares, sellPrice, symbol, marketEndTs);
   } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
     logError(`Lowball.SellOrder.${symbol}.${sideLabel}`, e);
+    sendTelegramError(`Lowball SELL placement failed after all retries (${symbol} ${sideLabel} @ ${sellPrice}): ${msg}`);
   }
 }
 

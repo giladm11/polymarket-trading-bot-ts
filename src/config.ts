@@ -53,7 +53,7 @@ const DEFAULT_CONFIG: BotConfig = {
     intervalMinutes: 15,
     preMarketMinutes: 5,
     buyLevels: [0.25, 0.20, 0.15],
-    buyExpirySeconds: 60,
+    buyExpirySeconds: 120, // put 60 seconds more because api cancel 60 seconds before
     sellMultiplier: 2,
     sellFraction: 0.5,
   },
