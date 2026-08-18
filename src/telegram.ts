@@ -324,7 +324,7 @@ function registerCommands(bot: TelegramBot) {
     const id = msg.chat.id.toString();
     if (!match?.[1]) return;
     const val = parseFloat(match[1]);
-    if (isNaN(val) || val <= 0 || val > 1) {
+    if (isNaN(val) || val < 0 || val > 1) {
       bot.sendMessage(id, '❌ Fraction must be between 0 and 1. Usage: /lowballfrac 0.5');
       return;
     }
