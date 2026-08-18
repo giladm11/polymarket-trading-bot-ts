@@ -43,6 +43,11 @@ interface FilledBuy {
 
 const filledBuys = new Map<string, FilledBuy[]>();
 
+// Set when the balance is too low to place a cycle's orders. While set, we
+// skip placing orders and re-check the balance each time we would enter, so
+// we resume automatically once enough USDC is available.
+let insufficientBalanceFlag = false;
+
 // ────────────────────────────────────────────────────────────────────────────
 
 export function startLowballStrategy() {
@@ -87,7 +92,51 @@ async function tryEnterNextMarkets() {
   // Only act when we're inside the pre-market window (and not past the boundary).
   if (msUntil <= 0 || msUntil > windowMs) return;
 
+  // Skip the cycle entirely (and the balance check below) if we've already
+  // placed this cycle's orders for every symbol.
+  const boundaryTs = Math.floor(nextBoundary.getTime() / 1000);
+  const allSymbolsEntered = lb.symbols.every(symbol => enteredCycles.has(`${symbol}:${boundaryTs}`));
+  if (allSymbolsEntered) return;
+
+  // ── Balance guard ──
+  // Make sure we have enough USDC to cover every order this cycle would place
+  // (2 sides × every buy level × order size, for each symbol). If we don't,
+  // flip the flag, warn once, and skip placing orders until balance recovers.
+  const requiredBalance = computeRequiredBalance(config);
+  const balance = await getBalance();
+
+  if (balance === null) {
+    logWarn('Lowball', 'Could not fetch balance — skipping balance guard this cycle.');
+  } else if (balance < requiredBalance) {
+    if (!insufficientBalanceFlag) {
+      insufficientBalanceFlag = true;
+      sendTelegramMessage(
+        `⚠️ <b>Lowball: insufficient balance</b>\n` +
+        `Needed to fill this cycle: <b>$${requiredBalance.toFixed(2)}</b>\n` +
+        `Available: <b>$${balance.toFixed(2)}</b>\n` +
+        `Orders are paused until the balance is sufficient.`
+      );
+    }
+    return;
+  } else if (insufficientBalanceFlag) {
+    insufficientBalanceFlag = false;
+    sendTelegramMessage(
+      `✅ <b>Lowball: balance restored</b>\n` +
+      `Available: <b>$${balance.toFixed(2)}</b> | Needed: <b>$${requiredBalance.toFixed(2)}</b>\n` +
+      `Resuming order placement.`
+    );
+  }
+
   await Promise.all(lb.symbols.map(symbol => tryEnterSymbol(symbol, nextBoundary, lb)));
+}
+
+/**
+ * Total USDC required to fill one full cycle: every symbol, both sides (UP/DOWN),
+ * and every buy level at the configured order size.
+ */
+function computeRequiredBalance(config: { orderSizeUsd: number; lowball: LowballConfig }): number {
+  const lb = config.lowball;
+  return config.orderSizeUsd * lb.symbols.length * 2 * lb.buyLevels.length;
 }
 
 async function tryEnterSymbol(symbol: string, nextBoundary: Date, lb: LowballConfig) {
