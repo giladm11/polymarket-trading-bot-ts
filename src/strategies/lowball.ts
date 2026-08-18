@@ -32,6 +32,17 @@ interface TrackedBuy {
 
 const trackedBuys: TrackedBuy[] = [];
 
+// Lowball buy fills, keyed by ticker, buffered and flushed (one Telegram
+// message per ticker) shortly after the buy window expires, instead of one
+// message per filled order.
+interface FilledBuy {
+  sideLabel: string;
+  buyPrice: number;
+  sizeMatched: number;
+}
+
+const filledBuys = new Map<string, FilledBuy[]>();
+
 // ────────────────────────────────────────────────────────────────────────────
 
 export function startLowballStrategy() {
@@ -149,8 +160,6 @@ async function doBuyOrder(
     return;
   }
 
-  console.log('exp', expiration);
-
   try {
     const orderId = await placeLimitOrderWithRetry(tokenId, OrderSide.BUY, buyPrice, size, expiration);
     logInfo(`Lowball.${symbol}.${sideLabel}`, `BUY order placed: ${orderId} @ ${buyPrice} (${size} shares)`);
@@ -158,6 +167,7 @@ async function doBuyOrder(
       orderId, tokenId, buyPrice, placedAt: Date.now(), sideLabel, symbol, expiration, marketEndTs,
     };
     trackedBuys.push(tracked);
+    scheduleBuyFlush(expiration);
     void monitorBuyFill(tracked);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -197,16 +207,14 @@ async function monitorBuyFill(tracked: TrackedBuy): Promise<void> {
       const isFilled = status === 'MATCHED' || status === 'filled' || status === 'closed';
       if (isFilled && sizeMatched > 0) {
         logInfo('Lowball.Monitor', `[${symbol}] Buy ${orderId} (${sideLabel}) FILLED — ${sizeMatched} shares`);
-        sendTelegramMessage(
-          `🟡 <b>LOWBALL BUY FILLED (${symbol} ${sideLabel})</b>\n` +
-          `Filled: <b>${sizeMatched}</b> shares @ ${buyPrice}\n` +
-          `Cost: <b>$${(sizeMatched * buyPrice).toFixed(2)}</b>`
-        );
+        const fills = filledBuys.get(symbol);
+        if (fills) fills.push({ sideLabel, buyPrice, sizeMatched });
+        else filledBuys.set(symbol, [{ sideLabel, buyPrice, sizeMatched }]);
 
         if (lb.sellFraction) {
           await doSellOrder(tokenId, sizeMatched, buyPrice, sideLabel, symbol, lb, marketEndTs);
         }
-        
+
         break;
       }
     } catch (e: unknown) {
@@ -216,6 +224,38 @@ async function monitorBuyFill(tracked: TrackedBuy): Promise<void> {
 
   const idx = trackedBuys.findIndex(o => o.orderId === orderId);
   if (idx !== -1) trackedBuys.splice(idx, 1);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
+function scheduleBuyFlush(expiration: number): void {
+  // Fire ~30s after the exchange expiry so any in-flight fills are captured
+  // before we summarize the buys.
+  const delayMs = expiration * 1000 + SAFETY_BUFFER_MS - Date.now();
+  setTimeout(flushBuys, Math.max(0, delayMs));
+}
+
+function flushBuys(): void {
+  // Report whatever filled, one message per ticker.
+  for (const [symbol, fills] of filledBuys) {
+    const totalShares = fills.reduce((s, f) => s + f.sizeMatched, 0);
+    const totalCost = fills.reduce((s, f) => s + f.sizeMatched * f.buyPrice, 0);
+    const lines = fills
+      .map(f =>
+        `• ${f.sideLabel} @ ${f.buyPrice} — ${f.sizeMatched} shares ($${(f.sizeMatched * f.buyPrice).toFixed(2)})`)
+      .join('\n');
+
+    sendTelegramMessage(
+      `🟡 <b>LOWBALL BUY FILLED (${symbol})</b>\n` +
+      `${lines}\n` +
+      `—\n` +
+      `Levels filled: <b>${fills.length}</b>\n` +
+      `Total: <b>${totalShares}</b> shares | Cost: <b>$${totalCost.toFixed(2)}</b>`
+    );
+  }
+
+  // Reset so the next run starts fresh.
+  filledBuys.clear();
 }
 
 // ────────────────────────────────────────────────────────────────────────────
