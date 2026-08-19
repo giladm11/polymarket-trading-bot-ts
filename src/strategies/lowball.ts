@@ -305,9 +305,10 @@ async function flushBuys(): Promise<void> {
 
     // Report whatever filled, one message per ticker.
     for (const [symbol, fills] of filledBuys) {
+      const sorted = [...fills].sort((a, b) => a.buyPrice - b.buyPrice);
       const totalShares = fills.reduce((s, f) => s + f.sizeMatched, 0);
       const totalCost = fills.reduce((s, f) => s + f.sizeMatched * f.buyPrice, 0);
-      const lines = fills
+      const lines = sorted
         .map(f =>
           `• ${f.sideLabel} @ ${f.buyPrice} — ${f.sizeMatched} shares ($${(f.sizeMatched * f.buyPrice).toFixed(2)})`)
         .join('\n');
