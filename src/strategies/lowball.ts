@@ -30,7 +30,8 @@ interface TrackedBuy {
   marketEndTs: number;
 }
 
-const trackedBuys: TrackedBuy[] = [];
+let trackedBuys: TrackedBuy[] = [];
+const filledBuys = new Map<string, FilledBuy[]>();
 
 // Lowball buy fills, keyed by ticker, buffered and flushed (one Telegram
 // message per ticker) shortly after the buy window expires, instead of one
@@ -41,7 +42,6 @@ interface FilledBuy {
   sizeMatched: number;
 }
 
-const filledBuys = new Map<string, FilledBuy[]>();
 
 // Set when the balance is too low to place a cycle's orders. While set, we
 // skip placing orders and re-check the balance each time we would enter, so
@@ -217,7 +217,14 @@ async function doBuyOrder(
     };
     trackedBuys.push(tracked);
     scheduleBuyFlush(expiration);
-    void monitorBuyFill(tracked);
+
+    // When we don't sell on fill (sellFraction == 0) there's nothing to do the
+    // instant a buy fills, so we skip the per-second polling and instead resolve
+    // the fill once, right before the grouped Telegram notification (see
+    // flushBuys). This drastically cuts API traffic when many buy orders are open.
+    if (loadConfig().lowball.sellFraction) {
+      void monitorBuyFill(tracked);
+    }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     logError(`Lowball.BuyOrder.${symbol}.${sideLabel}`, e);
@@ -284,7 +291,14 @@ function scheduleBuyFlush(expiration: number): void {
   setTimeout(flushBuys, Math.max(0, delayMs));
 }
 
-function flushBuys(): void {
+async function flushBuys(): Promise<void> {
+  // When sellFraction is 0 we never polled buys per-second, so resolve each
+  // matured buy once now, just before reporting, so the grouped notification
+  // reflects what actually filled.
+  if (!loadConfig().lowball.sellFraction) {
+    await resolvePendingBuys();
+  }
+
   // Report whatever filled, one message per ticker.
   for (const [symbol, fills] of filledBuys) {
     const totalShares = fills.reduce((s, f) => s + f.sizeMatched, 0);
@@ -305,6 +319,40 @@ function flushBuys(): void {
 
   // Reset so the next run starts fresh.
   filledBuys.clear();
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Resolve fills for the no-sell case (sellFraction == 0), where buys were never
+ * polled per-second. Does a single status check per buy whose monitoring window
+ * has fully elapsed, records the fills for the grouped notification, and drops
+ * the order from tracking. Buys whose window hasn't elapsed yet are left tracked
+ * for their own later flush.
+ */
+async function resolvePendingBuys(): Promise<void> {
+  for (const tracked of trackedBuys) {
+    try {
+      const { status, sizeMatched } = await fetchOrderStatus(tracked.orderId);
+
+      if (status === 'not_found') {
+        logInfo('Lowball.Flush', `[${tracked.symbol}] Buy ${tracked.orderId} (${tracked.sideLabel}) gone — no fill.`);
+        continue;
+      }
+
+      const isFilled = status === 'MATCHED' || status === 'filled' || status === 'closed';
+      if (isFilled && sizeMatched > 0) {
+        logInfo('Lowball.Flush', `[${tracked.symbol}] Buy ${tracked.orderId} (${tracked.sideLabel}) resolved FILLED — ${sizeMatched} shares`);
+        const fills = filledBuys.get(tracked.symbol);
+        if (fills) fills.push({ sideLabel: tracked.sideLabel, buyPrice: tracked.buyPrice, sizeMatched });
+        else filledBuys.set(tracked.symbol, [{ sideLabel: tracked.sideLabel, buyPrice: tracked.buyPrice, sizeMatched }]);
+      }
+    } catch (e: unknown) {
+      logError(`Lowball.Flush.${tracked.symbol}.${tracked.sideLabel}`, e);
+    }
+  }
+
+  trackedBuys = [];
 }
 
 // ────────────────────────────────────────────────────────────────────────────
