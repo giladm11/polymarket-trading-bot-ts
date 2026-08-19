@@ -18,6 +18,7 @@ const enteredCycles = new Set<string>(); // `${symbol}:${boundaryTs}`
 // When each tracked market cycle ends (unix seconds). Used to prune enteredCycles
 // and to stop sell monitoring once the market closes.
 const cycleEnds = new Map<string, number>();
+let isBuyFlushScheduled = false;
 
 interface TrackedBuy {
   orderId: string;
@@ -216,7 +217,7 @@ async function doBuyOrder(
       orderId, tokenId, buyPrice, placedAt: Date.now(), sideLabel, symbol, expiration, marketEndTs,
     };
     trackedBuys.push(tracked);
-    scheduleBuyFlush(expiration);
+    scheduleBuyFlushIfNeeded(expiration);
 
     // When we don't sell on fill (sellFraction == 0) there's nothing to do the
     // instant a buy fills, so we skip the per-second polling and instead resolve
@@ -284,9 +285,10 @@ async function monitorBuyFill(tracked: TrackedBuy): Promise<void> {
 
 // ────────────────────────────────────────────────────────────────────────────
 
-function scheduleBuyFlush(expiration: number): void {
+function scheduleBuyFlushIfNeeded(expiration: number): void {
   // Fire ~30s after the exchange expiry so any in-flight fills are captured
   // before we summarize the buys.
+  isBuyFlushScheduled = true;
   const delayMs = expiration * 1000 + SAFETY_BUFFER_MS - Date.now();
   setTimeout(flushBuys, Math.max(0, delayMs));
 }
@@ -319,6 +321,7 @@ async function flushBuys(): Promise<void> {
 
   // Reset so the next run starts fresh.
   filledBuys.clear();
+  isBuyFlushScheduled = false;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
