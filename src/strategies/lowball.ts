@@ -286,6 +286,7 @@ async function monitorBuyFill(tracked: TrackedBuy): Promise<void> {
 // ────────────────────────────────────────────────────────────────────────────
 
 function scheduleBuyFlushIfNeeded(expiration: number): void {
+  if (isBuyFlushScheduled) return;
   // Fire ~30s after the exchange expiry so any in-flight fills are captured
   // before we summarize the buys.
   isBuyFlushScheduled = true;
@@ -294,29 +295,33 @@ function scheduleBuyFlushIfNeeded(expiration: number): void {
 }
 
 async function flushBuys(): Promise<void> {
-  // When sellFraction is 0 we never polled buys per-second, so resolve each
-  // matured buy once now, just before reporting, so the grouped notification
-  // reflects what actually filled.
-  if (!loadConfig().lowball.sellFraction) {
-    await resolvePendingBuys();
-  }
+  try {
+    // When sellFraction is 0 we never polled buys per-second, so resolve each
+    // matured buy once now, just before reporting, so the grouped notification
+    // reflects what actually filled.
+    if (!loadConfig().lowball.sellFraction) {
+      await resolvePendingBuys();
+    }
 
-  // Report whatever filled, one message per ticker.
-  for (const [symbol, fills] of filledBuys) {
-    const totalShares = fills.reduce((s, f) => s + f.sizeMatched, 0);
-    const totalCost = fills.reduce((s, f) => s + f.sizeMatched * f.buyPrice, 0);
-    const lines = fills
-      .map(f =>
-        `• ${f.sideLabel} @ ${f.buyPrice} — ${f.sizeMatched} shares ($${(f.sizeMatched * f.buyPrice).toFixed(2)})`)
-      .join('\n');
+    // Report whatever filled, one message per ticker.
+    for (const [symbol, fills] of filledBuys) {
+      const totalShares = fills.reduce((s, f) => s + f.sizeMatched, 0);
+      const totalCost = fills.reduce((s, f) => s + f.sizeMatched * f.buyPrice, 0);
+      const lines = fills
+        .map(f =>
+          `• ${f.sideLabel} @ ${f.buyPrice} — ${f.sizeMatched} shares ($${(f.sizeMatched * f.buyPrice).toFixed(2)})`)
+        .join('\n');
 
-    sendTelegramMessage(
-      `🟡 <b>LOWBALL BUY FILLED (${symbol})</b>\n` +
-      `${lines}\n` +
-      `—\n` +
-      `Levels filled: <b>${fills.length}</b>\n` +
-      `Total: <b>${totalShares}</b> shares | Cost: <b>$${totalCost.toFixed(2)}</b>`
-    );
+      sendTelegramMessage(
+        `🟡 <b>LOWBALL BUY FILLED (${symbol})</b>\n` +
+        `${lines}\n` +
+        `—\n` +
+        `Levels filled: <b>${fills.length}</b>\n` +
+        `Total: <b>${totalShares}</b> shares | Cost: <b>$${totalCost.toFixed(2)}</b>`
+      );
+    }
+  } catch (e: unknown) {
+    logError(`Lowball.FlushBuys`, e);
   }
 
   // Reset so the next run starts fresh.
