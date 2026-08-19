@@ -28,7 +28,7 @@ export function initTelegramBot(): void {
 
   registerCommands(bot);
 
-  sendTelegramMessage('🤖 <b>Polymarket BTC Bot started!</b>\n\nType /help for available commands.');
+  // sendTelegramMessage('🤖 <b>Polymarket BTC Bot started!</b>\n\nType /help for available commands.');
 }
 
 function registerCommands(bot: TelegramBot) {
